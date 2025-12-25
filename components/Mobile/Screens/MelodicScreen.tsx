@@ -19,6 +19,8 @@ interface GameNote {
     targetTime: number;
 }
 
+const KEY_SIGS = ['C', 'G', 'D', 'A', 'E', 'F', 'Bb', 'Eb', 'Ab'] as const;
+
 export default function MelodicScreen() {
     const { t } = useTranslation();
     const { setIsExerciseActive } = useMobile();
@@ -29,7 +31,7 @@ export default function MelodicScreen() {
     const [timeSignature, setTimeSignature] = useState<'3/4' | '4/4'>('4/4');
     const [minNote, setMinNote] = useState('C4');
     const [maxNote, setMaxNote] = useState('C5');
-    const [keySignature, setKeySignature] = useState<'C' | 'G' | 'D' | 'A' | 'E' | 'F' | 'Bb' | 'Eb' | 'Ab'>('C');
+    const [keySignature, setKeySignature] = useState<typeof KEY_SIGS[number]>('C');
     const [allowedDurations, setAllowedDurations] = useState<('w' | 'h' | 'q' | '8' | '16')[]>(['q', '8']);
     const [includeRests, setIncludeRests] = useState(false);
     const [isMetronomeEnabled, setIsMetronomeEnabled] = useState(true);
@@ -50,12 +52,27 @@ export default function MelodicScreen() {
     const currentPageTimeRef = useRef<number>(0);
     const playPatternGeneratedRef = useRef<boolean>(false);
 
+    // Haptic feedback
+    const haptic = useCallback((intensity: 'light' | 'medium' | 'heavy' | 'success' | 'error' = 'light') => {
+        if (navigator.vibrate) {
+            const patterns = {
+                light: 10,
+                medium: 20,
+                heavy: 30,
+                success: [10, 50, 10],
+                error: [20, 100, 20]
+            };
+            navigator.vibrate(patterns[intensity] || 10);
+        }
+    }, []);
+
     useEffect(() => { updateAudioBpm(bpm); }, [bpm, updateAudioBpm]);
     useEffect(() => { const [num] = timeSignature.split('/').map(Number); updateAudioSignature(num, 4); }, [timeSignature, updateAudioSignature]);
 
     const getMeasureDuration = useCallback(() => { const beatSec = 60 / bpm; const [num] = timeSignature.split('/').map(Number); return num * beatSec; }, [bpm, timeSignature]);
 
     const startGame = async () => {
+        haptic('medium');
         setIsExerciseActive(true);
         await requestFullscreen();
         await lockLandscape();
@@ -77,6 +94,7 @@ export default function MelodicScreen() {
     };
 
     const stopGame = async () => {
+        haptic('medium');
         setIsPlaying(false);
         stopMetronome();
         if (requestRef.current) cancelAnimationFrame(requestRef.current);
@@ -118,205 +136,244 @@ export default function MelodicScreen() {
             const generatedNotes: GameNote[] = [];
 
             for (let m = 0; m < EXERCISE_MEASURES; m++) {
-                const measurePattern = generateMelodicPattern(allowedDurations, includeRests, { low: minNote, high: maxNote }, keySignature, timeSignature as any);
+                const pattern = generateMelodicPattern(allowedDurations, includeRests, { low: minNote, high: maxNote }, keySignature as any, timeSignature);
+                let cumulativeTime = playStartTime + (m * measureSec);
 
-                const measureStart = playStartTime + (m * measureSec);
-                let cursorInMeasure = 0;
-
-                for (const pn of measurePattern) {
-                    if (pn.duration === 'bar') {
-                        const gameNote: GameNote = { id: Math.random().toString(36).substr(2, 9), note: pn, x: 900, status: 'pending', targetTime: measureStart + cursorInMeasure };
-                        generatedNotes.push(gameNote);
-                        continue;
+                pattern.forEach(mn => {
+                    if (mn.duration !== 'bar') {
+                        generatedNotes.push({ id: Math.random().toString(36).substr(2, 9), note: mn, x: 0, status: 'pending', targetTime: cumulativeTime });
+                        cumulativeTime += mn.value * beatSec;
+                    } else {
+                        generatedNotes.push({ id: Math.random().toString(36).substr(2, 9), note: mn, x: 0, status: 'pending', targetTime: cumulativeTime });
                     }
-
-                    const noteDurSec = pn.value * beatSec;
-                    const gameNote: GameNote = { id: Math.random().toString(36).substr(2, 9), note: pn, x: 900, status: 'pending', targetTime: measureStart + cursorInMeasure };
-                    generatedNotes.push(gameNote);
-                    cursorInMeasure += noteDurSec;
-                }
+                });
             }
 
             setActiveNotes(generatedNotes);
             playPatternGeneratedRef.current = true;
-            nextSpawnTimeRef.current = playStartTime + playDur;
         }
 
-        setActiveNotes(prev => prev.map(n => {
-            if (n.status === 'pending' && currentTime > n.targetTime + 0.25) {
-                if (n.note.isRest) return { ...n, status: 'match_perfect' as const };
-                return { ...n, status: 'miss' as const };
-            }
-            return n;
-        }).filter(n => n.targetTime >= currentPageTimeRef.current - 5.0));
+        const playTimeInCycle = timeInCycle - gapDur;
+        if (playTimeInCycle >= 0 && playTimeInCycle < playDur) {
+            setActiveNotes(prev => prev.map(gn => {
+                if (gn.note.isRest || gn.note.duration === 'bar') return gn;
+                if (gn.status !== 'pending') return gn;
+                const noteRelTime = gn.targetTime - playStartTime;
+                if (playTimeInCycle >= noteRelTime && playTimeInCycle < noteRelTime + (gn.note.value * (60 / bpm))) {
+                    return gn;
+                } else if (playTimeInCycle >= noteRelTime + (gn.note.value * (60 / bpm))) {
+                    setStats(s => ({ ...s, miss: s.miss + 1 }));
+                    setCombo(0);
+                    return { ...gn, status: 'miss' };
+                }
+                return gn;
+            }));
+        }
 
         requestRef.current = requestAnimationFrame(gameLoop);
     };
 
-    useEffect(() => { return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); }; }, []);
-
-    const scoredNoteIds = useRef<Set<string>>(new Set());
-
-    useEffect(() => {
-        if (!isPlaying) return;
-        const unscoredGreenRests = activeNotes.filter(n => n.note.isRest && n.status === 'match_perfect' && !scoredNoteIds.current.has(n.id));
-        if (unscoredGreenRests.length > 0) {
-            unscoredGreenRests.forEach(n => scoredNoteIds.current.add(n.id));
-            setScore(s => s + (unscoredGreenRests.length * 5));
-            setStats(s => ({ ...s, perfect: s.perfect + unscoredGreenRests.length }));
-            setCombo(c => c + unscoredGreenRests.length);
-        }
-    }, [activeNotes, isPlaying]);
-
     const handleMIDINote = useCallback((event: MIDINoteEvent) => {
-        if (event.type !== 'noteOn') return;
-        const played = event.pitch;
-        if (!isPlaying || !played) return;
+        if (!isPlaying || event.type !== 'noteOn') return;
 
-        const currentTime = getAudioTime();
+        setActiveNotes(prev => {
+            const pending = prev.filter(n => n.status === 'pending' && !n.note.isRest && n.note.duration !== 'bar');
+            if (pending.length === 0) return prev;
 
-        setActiveNotes(currentNotes => {
-            const candidates = currentNotes.filter(n => n.status === 'pending' && n.note.duration !== 'bar' && !n.note.isRest);
-            if (candidates.length === 0) return currentNotes;
-            candidates.sort((a, b) => Math.abs(a.targetTime - currentTime) - Math.abs(b.targetTime - currentTime));
+            const currentTime = getAudioTime();
+            const validNotes = pending.filter(n => {
+                const noteEnd = n.targetTime + (n.note.value * (60 / bpm));
+                return currentTime >= n.targetTime - 0.2 && currentTime <= noteEnd + 0.2;
+            });
 
-            const matchingCandidates = candidates.filter(n => n.note.generated && n.note.generated.midiNumber === played);
-            const target = matchingCandidates.length > 0 ? matchingCandidates[0] : candidates[0];
-            if (!target || !target.note.generated) return currentNotes;
+            if (validNotes.length === 0) return prev;
 
-            const timeDiff = target.targetTime - currentTime;
-            const absTimeDiff = Math.abs(timeDiff);
-            const PERFECT_WINDOW_S = 0.10;
-            const GOOD_WINDOW_S = 0.15;
-            const IGNORE_WINDOW_S = 0.4;
+            const target = validNotes[0];
+            if (!target.note.generated) return prev;
 
-            if (absTimeDiff > IGNORE_WINDOW_S) return currentNotes;
+            const targetPitch = target.note.generated.midiNumber % 12;
+            const playedPitch = event.pitch % 12;
 
-            if (played !== target.note.generated.midiNumber) {
-                setCombo(0);
-                setStats(s => ({ ...s, miss: s.miss + 1 }));
-                setFeedback({ text: t('melodic.wrong_note'), color: 'text-red-500' });
+            if (targetPitch === playedPitch) {
+                const timing = Math.abs(currentTime - target.targetTime);
+                let newStatus: GameNote['status'] = 'pending';
+                let points = 0;
+
+                if (timing <= 0.1) {
+                    newStatus = 'match_perfect';
+                    points = 5;
+                    setStats(s => ({ ...s, perfect: s.perfect + 1 }));
+                    setCombo(c => c + 1);
+                    setFeedback({ text: `${t('rhythm.perfect')} +${points}`, color: 'text-green-500' });
+                    haptic('success');
+                } else if (timing <= 0.2) {
+                    newStatus = 'match_good';
+                    points = 3;
+                    setStats(s => ({ ...s, good: s.good + 1 }));
+                    setCombo(c => c + 1);
+                    setFeedback({ text: `${t('rhythm.good')} +${points}`, color: 'text-yellow-500' });
+                    haptic('medium');
+                }
+
+                setScore(s => s + points);
                 setTimeout(() => setFeedback(null), 800);
-                return currentNotes.map(n => n.id === target.id ? { ...n, status: 'miss' as GameNote['status'] } : n);
-            }
 
-            let newStatus: GameNote['status'] = 'miss';
-            let points = 0;
-            let feedbackText = '';
-            let feedbackColor = '';
-
-            if (absTimeDiff <= PERFECT_WINDOW_S) {
-                newStatus = 'match_perfect';
-                points = 5;
-                feedbackText = t('rhythm.perfect');
-                feedbackColor = 'text-green-500';
-                setStats(s => ({ ...s, perfect: s.perfect + 1 }));
-                setCombo(c => c + 1);
-            } else if (absTimeDiff <= GOOD_WINDOW_S) {
-                newStatus = 'match_good';
-                points = 3;
-                feedbackText = timeDiff > 0 ? `${t('melodic.early')} (${t('rhythm.good')})` : `${t('melodic.late')} (${t('rhythm.good')})`;
-                feedbackColor = 'text-yellow-500';
-                setStats(s => ({ ...s, good: s.good + 1 }));
-                setCombo(c => c + 1);
+                return prev.map(n => n.id === target.id ? { ...n, status: newStatus } : n);
             } else {
-                newStatus = 'miss';
-                feedbackText = timeDiff > 0 ? t('melodic.too_early') : t('melodic.too_late');
-                feedbackColor = 'text-red-500';
-                setStats(s => ({ ...s, miss: s.miss + 1 }));
-                setCombo(0);
+                setFeedback({ text: t('melodic.wrong_note'), color: 'text-red-500' });
+                haptic('error');
+                setTimeout(() => setFeedback(null), 800);
+                return prev;
             }
-
-            if (points > 0) setScore(s => s + points);
-            setFeedback({ text: feedbackText, color: feedbackColor });
-            setTimeout(() => setFeedback(null), 1000);
-
-            return currentNotes.map(n => n.id === target.id ? { ...n, status: newStatus } : n);
         });
-    }, [isPlaying, getAudioTime, t]);
+    }, [isPlaying, bpm, t, getAudioTime, haptic]);
 
     useMIDIInput(handleMIDINote);
 
-    const KEY_SIGS: ('C' | 'G' | 'D' | 'A' | 'E' | 'F' | 'Bb' | 'Eb' | 'Ab')[] = ['C', 'G', 'D', 'A', 'E', 'F', 'Bb', 'Eb', 'Ab'];
+    useEffect(() => { return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); }; }, []);
 
     return (
-        <div className="flex flex-col h-full bg-gradient-to-br from-stone-50 to-stone-100 overflow-hidden">
+        <div className="flex flex-col h-full bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 overflow-hidden">
             {!isPlaying && (
                 <>
                     <MobileScreenHeader title={t('melodic.title')} />
-                    <div className="flex-1 overflow-y-auto px-3 py-3 pb-safe">
-                        <div className="max-w-md mx-auto space-y-2.5">
-                            <div className="bg-white/90 backdrop-blur-sm p-2.5 rounded-xl shadow-sm border border-gray-100">
-                                <div className="flex items-center justify-between mb-1.5">
-                                    <label className="text-xs font-bold text-gray-600 uppercase">{t('common.bpm')}</label>
-                                    <span className="text-lg font-black text-amber-600">{bpm}</span>
+                    <div className="flex-1 overflow-y-auto px-4 py-4 pb-safe">
+                        <div className="max-w-md mx-auto space-y-3">
+                            {/* BPM Control - FEATURED */}
+                            <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-4 rounded-2xl shadow-lg">
+                                <div className="flex items-center justify-between mb-3">
+                                    <label className="text-white font-bold text-sm uppercase flex items-center gap-2">
+                                        <span className="text-2xl">⏱️</span>
+                                        <span>{t('common.speed')}</span>
+                                    </label>
+                                    <div className="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-xl">
+                                        <span className="text-white text-3xl font-black">{bpm}</span>
+                                    </div>
                                 </div>
-                                <input type="range" min="40" max="200" value={bpm} onChange={(e) => setBpm(Number(e.target.value))} className="w-full h-1.5 accent-amber-500" />
+                                <input
+                                    type="range"
+                                    min="40"
+                                    max="200"
+                                    value={bpm}
+                                    onChange={(e) => setBpm(Number(e.target.value))}
+                                    className="w-full h-3 bg-white/20 rounded-full appearance-none cursor-pointer accent-white"
+                                />
                             </div>
 
-                            <div className="bg-white/90 backdrop-blur-sm p-2.5 rounded-xl shadow-sm border border-gray-100">
+                            {/* Time Signature & Key */}
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="bg-white/90 backdrop-blur-sm p-3 rounded-2xl shadow-md border border-gray-100">
+                                    <label className="text-xs font-bold text-gray-600 uppercase block mb-2">{t('common.time_signature')}</label>
+                                    <div className="flex gap-1">
+                                        {(['3/4', '4/4'] as const).map(sig => (
+                                            <button
+                                                key={sig}
+                                                onClick={() => { haptic('light'); setTimeSignature(sig); }}
+                                                className={`flex-1 py-2 rounded-xl text-sm font-bold transition-all ${timeSignature === sig ? 'bg-green-500 text-white shadow-lg scale-105' : 'bg-gray-100 text-gray-600'}`}
+                                            >
+                                                {sig}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="bg-white/90 backdrop-blur-sm p-3 rounded-2xl shadow-md border border-gray-100">
+                                    <label className="text-xs font-bold text-gray-600 uppercase block mb-2">{t('common.key')}</label>
+                                    <select 
+                                        value={keySignature} 
+                                        onChange={e => { haptic('light'); setKeySignature(e.target.value as any); }} 
+                                        className="w-full py-2 px-2 rounded-xl border-2 border-gray-200 text-sm font-bold focus:border-green-400 focus:outline-none bg-white"
+                                    >
+                                        {KEY_SIGS.map(k => (<option key={k} value={k}>{k}</option>))}
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* Note Durations */}
+                            <div className="bg-white/90 backdrop-blur-sm p-3 rounded-2xl shadow-md border border-gray-100">
+                                <label className="text-xs font-bold text-gray-600 uppercase block mb-2 flex items-center gap-2">
+                                    <span>🎵</span>
+                                    <span>{t('common.notes_label')}</span>
+                                </label>
                                 <div className="flex gap-2">
-                                    <div className="flex-1">
-                                        <label className="text-xs font-bold text-gray-600 uppercase block mb-1">{t('common.time_signature')}</label>
-                                        <div className="flex gap-1.5">
-                                            {(['3/4', '4/4'] as const).map(sig => (
-                                                <button key={sig} onClick={() => setTimeSignature(sig)} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${timeSignature === sig ? 'bg-amber-600 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>{sig}</button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                    <div className="flex-1">
-                                        <label className="text-xs font-bold text-gray-600 uppercase block mb-1">{t('common.key')}</label>
-                                        <select value={keySignature} onChange={e => setKeySignature(e.target.value as any)} className="w-full py-1.5 px-2 rounded-lg border border-gray-200 text-xs font-semibold focus:border-amber-400 focus:outline-none">
-                                            {KEY_SIGS.map(k => (<option key={k} value={k}>{k}</option>))}
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="bg-white/90 backdrop-blur-sm p-2.5 rounded-xl shadow-sm border border-gray-100">
-                                <label className="text-xs font-bold text-gray-600 uppercase block mb-1.5">{t('common.notes_label')}</label>
-                                <div className="flex gap-1.5">
                                     {[{ id: 'w', icon: '𝅝' }, { id: 'h', icon: '𝅗𝅥' }, { id: 'q', icon: '♩' }, { id: '8', icon: '♪' }, { id: '16', icon: '♬' }].map(opt => (
-                                        <button key={opt.id} onClick={() => { if (allowedDurations.includes(opt.id as any)) setAllowedDurations(allowedDurations.filter(d => d !== opt.id)); else setAllowedDurations([...allowedDurations, opt.id as any]); }} className={`flex-1 py-2 rounded-lg font-bold text-lg transition-all ${allowedDurations.includes(opt.id as any) ? 'bg-amber-500 text-white shadow-md scale-105' : 'bg-gray-100 text-gray-400'}`}>{opt.icon}</button>
+                                        <button
+                                            key={opt.id}
+                                            onClick={() => {
+                                                haptic('light');
+                                                if (allowedDurations.includes(opt.id as any)) setAllowedDurations(allowedDurations.filter(d => d !== opt.id));
+                                                else setAllowedDurations([...allowedDurations, opt.id as any]);
+                                            }}
+                                            className={`flex-1 py-3 rounded-xl font-bold text-2xl transition-all ${allowedDurations.includes(opt.id as any) ? 'bg-gradient-to-br from-green-500 to-emerald-600 text-white shadow-lg scale-105' : 'bg-gray-100 text-gray-400'}`}
+                                        >
+                                            {opt.icon}
+                                        </button>
                                     ))}
                                 </div>
                             </div>
 
-                            <div className="bg-white/90 backdrop-blur-sm p-2.5 rounded-xl shadow-sm border border-gray-100">
-                                <label className="text-xs font-bold text-gray-600 uppercase block mb-1.5">{t('common.note_range')}</label>
-                                <div className="flex items-center gap-1.5">
-                                    <input type="text" value={minNote} onChange={e => setMinNote(e.target.value)} className="flex-1 py-1.5 px-2 text-sm rounded-lg border border-gray-200 text-center font-semibold focus:border-amber-400 focus:outline-none" placeholder="C4" />
-                                    <span className="text-gray-400 text-sm">—</span>
-                                    <input type="text" value={maxNote} onChange={e => setMaxNote(e.target.value)} className="flex-1 py-1.5 px-2 text-sm rounded-lg border border-gray-200 text-center font-semibold focus:border-amber-400 focus:outline-none" placeholder="C5" />
+                            {/* Note Range */}
+                            <div className="bg-white/90 backdrop-blur-sm p-4 rounded-2xl shadow-md border border-gray-100">
+                                <label className="text-xs font-bold text-gray-600 uppercase block mb-3 flex items-center gap-2">
+                                    <span className="text-lg">🎹</span>
+                                    <span>{t('common.note_range')}</span>
+                                </label>
+                                <div className="flex items-center gap-3">
+                                    <input
+                                        type="text"
+                                        value={minNote}
+                                        onChange={e => setMinNote(e.target.value)}
+                                        className="flex-1 py-3 px-4 text-base rounded-xl border-2 border-gray-200 text-center font-bold focus:border-green-400 focus:outline-none bg-white"
+                                        placeholder="C4"
+                                    />
+                                    <span className="text-gray-400 text-2xl font-bold">→</span>
+                                    <input
+                                        type="text"
+                                        value={maxNote}
+                                        onChange={e => setMaxNote(e.target.value)}
+                                        className="flex-1 py-3 px-4 text-base rounded-xl border-2 border-gray-200 text-center font-bold focus:border-green-400 focus:outline-none bg-white"
+                                        placeholder="C5"
+                                    />
                                 </div>
                             </div>
 
-                            <div className="bg-white/90 backdrop-blur-sm p-2.5 rounded-xl shadow-sm border border-gray-100">
-                                <div className="flex flex-wrap gap-1.5">
-                                    <label className={`flex-1 min-w-[90px] flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg cursor-pointer transition-all ${includeRests ? 'bg-amber-500 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>
-                                        <input type="checkbox" checked={includeRests} onChange={e => setIncludeRests(e.target.checked)} className="hidden" />
-                                        <span className="text-xs font-semibold">🎵 {t('common.add_rests')}</span>
-                                    </label>
-                                    <label className={`flex-1 min-w-[90px] flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg cursor-pointer transition-all ${isMetronomeEnabled ? 'bg-amber-500 text-white shadow-md' : 'bg-gray-100 text-gray-600'}`}>
-                                        <input type="checkbox" checked={isMetronomeEnabled} onChange={e => setIsMetronomeEnabled(e.target.checked)} className="hidden" />
-                                        <span className="text-xs font-semibold">⏱️ {t('common.metronome')}</span>
-                                    </label>
+                            {/* Options */}
+                            <div className="bg-white/90 backdrop-blur-sm p-3 rounded-2xl shadow-md border border-gray-100">
+                                <label className="text-xs font-bold text-gray-600 uppercase block mb-2">Options</label>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => { haptic('light'); setIncludeRests(!includeRests); }}
+                                        className={`flex-1 py-2.5 px-4 rounded-xl font-semibold text-sm transition-all flex items-center justify-center gap-2 ${includeRests ? 'bg-gradient-to-r from-green-500 to-emerald-600 text-white shadow-lg' : 'bg-gray-100 text-gray-600'}`}
+                                    >
+                                        <span>🎵</span>
+                                        <span>{t('common.add_rests')}</span>
+                                    </button>
+                                    <button
+                                        onClick={() => { haptic('light'); setIsMetronomeEnabled(!isMetronomeEnabled); }}
+                                        className={`flex-1 py-2.5 px-4 rounded-xl font-semibold text-sm transition-all flex items-center justify-center gap-2 ${isMetronomeEnabled ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg' : 'bg-gray-100 text-gray-600'}`}
+                                    >
+                                        <span>⏱️</span>
+                                        <span>{t('common.metronome')}</span>
+                                    </button>
                                 </div>
                             </div>
 
-                            {/* MIDI Requirement Info */}
-                            <div className="bg-amber-50/90 backdrop-blur-sm border border-amber-300 rounded-xl p-3 text-sm">
-                                <p className="font-bold text-amber-900 mb-1 flex items-center gap-2">
-                                    <span>🎹</span>
+                            {/* MIDI Info */}
+                            <div className="bg-gradient-to-br from-green-50 to-emerald-50 p-4 rounded-2xl border-2 border-green-200">
+                                <h3 className="text-sm font-bold text-green-900 mb-2 flex items-center gap-2">
+                                    <span className="text-lg">🎹</span>
                                     <span>{t('melodic.midi_required_title')}</span>
-                                </p>
-                                <p className="text-xs text-amber-800 leading-relaxed">
+                                </h3>
+                                <p className="text-xs text-green-800 leading-relaxed">
                                     {t('melodic.midi_required_desc')}
                                 </p>
                             </div>
 
-                            <button onClick={startGame} className="w-full bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-white font-black py-4 rounded-2xl shadow-xl active:scale-95 transition-transform flex items-center justify-center gap-3 text-xl mt-4 border-2 border-amber-400">
-                                <span className="text-3xl">▶️</span>
+                            <button
+                                onClick={startGame}
+                                className="w-full bg-gradient-to-r from-green-500 via-emerald-600 to-green-600 text-white font-black py-5 rounded-2xl shadow-2xl active:scale-95 transition-transform flex items-center justify-center gap-3 text-xl border-2 border-green-400"
+                            >
+                                <span className="text-4xl">▶️</span>
                                 <span>{t('common.start')}</span>
                             </button>
 
@@ -327,26 +384,44 @@ export default function MelodicScreen() {
             )}
 
             {isPlaying && (
-                <div className="flex-1 flex flex-col bg-stone-50 overflow-hidden relative">
-                    <div className="absolute top-2 left-0 right-0 flex justify-center space-x-4 pointer-events-none z-30">
-                        <div className="bg-white/90 px-4 py-2 rounded-lg border border-gray-200 shadow-sm"><span className="text-green-600 font-bold block text-sm">{t('stats.perfect')}</span><span className="text-2xl font-bold text-green-700">{stats.perfect}</span></div>
-                        <div className="bg-white/90 px-4 py-2 rounded-lg border border-gray-200 shadow-sm"><span className="text-yellow-600 font-bold block text-sm">{t('stats.good')}</span><span className="text-2xl font-bold text-yellow-700">{stats.good}</span></div>
-                        <div className="bg-white/90 px-4 py-2 rounded-lg border border-gray-200 shadow-sm"><span className="text-red-500 font-bold block text-sm">{t('stats.miss')}</span><span className="text-2xl font-bold text-red-600">{stats.miss}</span></div>
-                        {combo > 1 && (<div className="bg-white/90 px-4 py-2 rounded-lg border border-orange-200 shadow-sm"><span className="text-orange-500 font-bold block text-sm">{t('rhythm.combo')}</span><span className="text-2xl font-bold text-orange-600">{combo}x</span></div>)}
+                <div className="flex-1 flex flex-col bg-gradient-to-br from-green-100 to-emerald-100 overflow-hidden relative">
+                    <div className="absolute top-3 left-0 right-0 flex justify-center gap-3 pointer-events-none z-30 px-4">
+                        <div className="bg-white/95 backdrop-blur-md px-4 py-2 rounded-2xl shadow-xl border-2 border-green-200 flex gap-6">
+                            <div className="text-center">
+                                <div className="text-xs font-bold text-green-600 uppercase">Perfect</div>
+                                <div className="text-2xl font-black text-green-700">{stats.perfect}</div>
+                            </div>
+                            <div className="text-center">
+                                <div className="text-xs font-bold text-yellow-600 uppercase">Good</div>
+                                <div className="text-2xl font-black text-yellow-700">{stats.good}</div>
+                            </div>
+                            <div className="text-center">
+                                <div className="text-xs font-bold text-red-600 uppercase">Miss</div>
+                                <div className="text-2xl font-black text-red-700">{stats.miss}</div>
+                            </div>
+                        </div>
+                        {combo > 1 && (
+                            <div className="bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2 rounded-2xl shadow-xl animate-pulse">
+                                <div className="text-xs font-bold text-white uppercase">Combo</div>
+                                <div className="text-2xl font-black text-white">{combo}x 🔥</div>
+                            </div>
+                        )}
                     </div>
 
                     {countdown !== null && (
-                        <div className="absolute top-24 left-0 right-0 flex items-center justify-center z-40 pointer-events-none">
-                            <div className="text-center bg-white/90 px-6 py-2 rounded-xl shadow-lg border border-amber-100">
-                                <div className="text-xl font-bold text-amber-600 mb-0.5">{countdown > 1 ? t('rhythm.wait') : t('rhythm.ready')}</div>
-                                <div className="text-4xl font-black text-amber-800">{countdown}</div>
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm z-50">
+                            <div className="bg-white/95 px-8 py-6 rounded-3xl shadow-2xl border-4 border-green-400 text-center">
+                                <div className="text-lg font-black text-green-600 mb-2">
+                                    {countdown > 1 ? t('rhythm.wait') : t('rhythm.ready')}
+                                </div>
+                                <div className="text-7xl font-black text-green-700 animate-pulse">{countdown}</div>
                             </div>
                         </div>
                     )}
 
                     {feedback && (
-                        <div className="absolute top-32 left-0 right-0 z-50 flex justify-center pointer-events-none">
-                            <div className={`text-2xl font-black animate-bounce ${feedback.color} bg-white/95 px-6 py-2 rounded-full shadow-lg`}>
+                        <div className="absolute top-24 left-0 right-0 z-50 flex justify-center pointer-events-none">
+                            <div className={`text-3xl font-black ${feedback.color} bg-white/95 px-8 py-3 rounded-2xl shadow-2xl animate-bounce border-2 ${feedback.color.includes('green') ? 'border-green-400' : feedback.color.includes('yellow') ? 'border-yellow-400' : 'border-red-400'}`}>
                                 {feedback.text}
                             </div>
                         </div>
@@ -356,11 +431,26 @@ export default function MelodicScreen() {
                         <StaticMelodicStaff notes={activeNotes} timeSignature={timeSignature} />
                     </div>
 
-                    <div className="absolute bottom-4 right-4 z-20">
-                        <button onClick={stopGame} className="bg-red-600 hover:bg-red-700 text-white font-bold px-6 py-3 rounded-full shadow-xl active:scale-95 transition-all flex items-center gap-2">
-                            <span className="text-xl">⏹️</span>
-                            <span>{t('common.stop')}</span>
-                        </button>
+                    <div className="absolute top-3 left-4 z-30">
+                        <div className="bg-gradient-to-r from-green-500 to-emerald-600 px-4 py-2 rounded-2xl shadow-xl border-2 border-green-400">
+                            <div className="text-xs font-bold text-white/80 uppercase">Score</div>
+                            <div className="text-3xl font-black text-white">{score}</div>
+                        </div>
+                    </div>
+
+                    <button
+                        onClick={stopGame}
+                        className="absolute bottom-4 right-4 bg-gradient-to-r from-red-500 to-red-600 text-white font-bold px-6 py-3 rounded-2xl shadow-2xl active:scale-95 transition-all z-40 flex items-center gap-2 border-2 border-red-400"
+                    >
+                        <span className="text-xl">⏹️</span>
+                        <span className="font-black">{t('common.stop')}</span>
+                    </button>
+
+                    <div className="absolute bottom-4 left-4 z-30 bg-white/95 backdrop-blur-sm px-4 py-2 rounded-2xl shadow-lg border-2 border-green-200">
+                        <div className="text-xs font-bold text-green-600 flex items-center gap-2">
+                            <span className="text-lg">🎹</span>
+                            <span>Play the melody on MIDI</span>
+                        </div>
                     </div>
                 </div>
             )}

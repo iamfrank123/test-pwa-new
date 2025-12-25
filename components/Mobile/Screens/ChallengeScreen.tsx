@@ -38,8 +38,9 @@ export default function ChallengeScreen() {
     const [isPlaying, setIsPlaying] = useState(false);
     const [score, setScore] = useState(0);
     const [combo, setCombo] = useState(0);
+    const [bestCombo, setBestCombo] = useState(0);
     const [activeNotes, setActiveNotes] = useState<GameNote[]>([]);
-    const [feedback, setFeedback] = useState<{ text: string; color: string } | null>(null);
+    const [feedback, setFeedback] = useState<{ text: string; color: string; points?: number } | null>(null);
 
     const lastFrameTimeRef = useRef<number>(0);
     const requestRef = useRef<number>();
@@ -47,7 +48,22 @@ export default function ChallengeScreen() {
 
     const pixelsPerSecond = bpm * 2;
 
+    // Haptic feedback
+    const haptic = useCallback((intensity: 'light' | 'medium' | 'heavy' | 'success' | 'error' = 'light') => {
+        if (navigator.vibrate) {
+            const patterns = {
+                light: 10,
+                medium: 20,
+                heavy: 30,
+                success: [10, 50, 10],
+                error: [20, 100, 20]
+            };
+            navigator.vibrate(patterns[intensity] || 10);
+        }
+    }, []);
+
     const startGame = async () => {
+        haptic('medium');
         setIsExerciseActive(true);
         await requestFullscreen();
         await lockLandscape();
@@ -61,11 +77,15 @@ export default function ChallengeScreen() {
     };
 
     const stopGame = async () => {
+        haptic('medium');
         setIsPlaying(false);
         if (requestRef.current) cancelAnimationFrame(requestRef.current);
         setIsExerciseActive(false);
         await exitFullscreen();
         await unlock();
+        
+        // Update best combo
+        if (combo > bestCombo) setBestCombo(combo);
     };
 
     const gameLoop = (time: number) => {
@@ -110,6 +130,7 @@ export default function ChallengeScreen() {
 
     const handleInput = useCallback((input: { type: 'midi' | 'touch', pitch?: number }) => {
         if (!isPlaying) return;
+        haptic('light');
 
         setActiveNotes(currentNotes => {
             const MAX_INTERACTION_RANGE = 300;
@@ -150,7 +171,8 @@ export default function ChallengeScreen() {
                 const isMatch = (input.pitch! % 12) === (targetNote.note.midiNumber % 12);
                 if (!isMatch) {
                     setCombo(0);
-                    setFeedback({ text: 'Nota sbagliata!', color: 'text-red-500' });
+                    setFeedback({ text: t('melodic.wrong_note'), color: 'text-red-500' });
+                    haptic('error');
                     setTimeout(() => setFeedback(null), 500);
                     return currentNotes;
                 }
@@ -162,21 +184,28 @@ export default function ChallengeScreen() {
             if (dist <= HIT_WINDOW) {
                 newStatus = 'match_perfect';
                 points = SCORE_PERFECT;
-                setFeedback({ text: `Perfect +${SCORE_PERFECT}`, color: 'text-green-500' });
+                setFeedback({ text: `${t('rhythm.perfect')}`, color: 'text-green-500', points });
+                haptic('success');
             } else if (dist <= HIT_WINDOW_GOOD) {
                 newStatus = 'match_good';
                 points = SCORE_GOOD;
-                setFeedback({ text: `Good +${SCORE_GOOD}`, color: 'text-yellow-500' });
+                setFeedback({ text: `${t('rhythm.good')}`, color: 'text-yellow-500', points });
+                haptic('medium');
             } else {
                 setCombo(0);
                 points = 0;
                 newStatus = 'miss';
-                setFeedback({ text: 'Mancato 0', color: 'text-red-500' });
+                setFeedback({ text: t('challenge.mancato'), color: 'text-red-500' });
+                haptic('error');
             }
 
             if (points > 0) {
                 setScore(s => s + points);
-                setCombo(c => c + 1);
+                setCombo(c => {
+                    const newCombo = c + 1;
+                    if (newCombo > bestCombo) setBestCombo(newCombo);
+                    return newCombo;
+                });
             }
 
             setTimeout(() => setFeedback(null), 800);
@@ -185,7 +214,7 @@ export default function ChallengeScreen() {
                 n.id === targetNote.id ? { ...n, status: newStatus } : n
             );
         });
-    }, [isPlaying]);
+    }, [isPlaying, t, bestCombo, haptic]);
 
     const handleMidiInput = useCallback((event: MIDINoteEvent) => {
         if (event.type === 'noteOn') {
@@ -200,52 +229,125 @@ export default function ChallengeScreen() {
     }, [handleInput]);
 
     return (
-        <div className="flex flex-col h-full bg-gradient-to-br from-stone-50 to-stone-100 overflow-hidden">
+        <div className="flex flex-col h-full bg-gradient-to-br from-amber-50 via-orange-50 to-red-50 overflow-hidden">
             {!isPlaying && (
                 <>
                     <MobileScreenHeader title={t('challenge.title')} />
-                    <div className="flex-1 overflow-y-auto px-3 py-3 pb-safe">
-                        <div className="max-w-md mx-auto space-y-2.5">
-                            <div className="bg-white/90 backdrop-blur-sm p-2.5 rounded-xl shadow-sm border border-gray-100">
-                                <div className="flex items-center justify-between mb-1.5">
-                                    <label className="text-xs font-bold text-gray-600 uppercase">{t('common.speed')}</label>
-                                    <span className="text-lg font-black text-amber-600">{bpm} {t('common.bpm')}</span>
+                    <div className="flex-1 overflow-y-auto px-4 py-4 pb-safe">
+                        <div className="max-w-md mx-auto space-y-3">
+                            {/* Challenge Info Banner */}
+                            <div className="bg-gradient-to-r from-amber-500 to-orange-600 p-4 rounded-2xl shadow-lg">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-sm">
+                                        <span className="text-3xl">⚡</span>
+                                    </div>
+                                    <div className="flex-1">
+                                        <h3 className="text-white font-black text-lg">Challenge Mode</h3>
+                                        <p className="text-white/90 text-xs">Test your speed & accuracy!</p>
+                                    </div>
                                 </div>
-                                <input type="range" min="30" max="180" value={bpm} onChange={(e) => setBpm(Number(e.target.value))} className="w-full h-1.5 accent-amber-500" />
+                                {bestCombo > 0 && (
+                                    <div className="bg-white/20 backdrop-blur-sm px-3 py-2 rounded-xl mt-2">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-white/80 text-xs font-bold">Best Combo</span>
+                                            <span className="text-white text-xl font-black">{bestCombo}x 🏆</span>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
-                            <div className="bg-white/90 backdrop-blur-sm p-2.5 rounded-xl shadow-sm border border-gray-100">
-                                <label className="text-xs font-bold text-gray-600 uppercase block mb-1.5">{t('common.key')}</label>
-                                <div className="grid grid-cols-5 gap-1.5">
+                            {/* BPM Control - FEATURED */}
+                            <div className="bg-white/90 backdrop-blur-sm p-4 rounded-2xl shadow-md border border-gray-100">
+                                <div className="flex items-center justify-between mb-3">
+                                    <label className="text-gray-700 font-bold text-sm uppercase flex items-center gap-2">
+                                        <span className="text-2xl">🚀</span>
+                                        <span>{t('common.speed')}</span>
+                                    </label>
+                                    <div className="bg-gradient-to-r from-amber-500 to-orange-600 px-4 py-2 rounded-xl shadow-md">
+                                        <span className="text-white text-3xl font-black">{bpm}</span>
+                                    </div>
+                                </div>
+                                <input
+                                    type="range"
+                                    min="30"
+                                    max="180"
+                                    value={bpm}
+                                    onChange={(e) => { haptic('light'); setBpm(Number(e.target.value)); }}
+                                    className="w-full h-3 bg-gray-200 rounded-full appearance-none cursor-pointer accent-amber-500"
+                                />
+                                <div className="flex justify-between text-gray-400 text-xs mt-2">
+                                    <span>Easy (30)</span>
+                                    <span>Insane (180)</span>
+                                </div>
+                            </div>
+
+                            {/* Key Signature */}
+                            <div className="bg-white/90 backdrop-blur-sm p-4 rounded-2xl shadow-md border border-gray-100">
+                                <label className="text-xs font-bold text-gray-600 uppercase block mb-3 flex items-center gap-2">
+                                    <span className="text-lg">🎼</span>
+                                    <span>{t('common.key')}</span>
+                                </label>
+                                <div className="grid grid-cols-5 gap-2">
                                     {KEY_SIGNATURES.map(key => (
-                                        <button key={key} onClick={() => setKeySignature(key)} className={`py-2 rounded-lg text-sm font-bold transition-all ${keySignature === key ? 'bg-amber-500 text-white shadow-md scale-105' : 'bg-gray-100 text-gray-600'}`}>{key}</button>
+                                        <button
+                                            key={key}
+                                            onClick={() => { haptic('light'); setKeySignature(key); }}
+                                            className={`py-3 rounded-xl text-sm font-bold transition-all ${
+                                                keySignature === key 
+                                                    ? 'bg-gradient-to-br from-amber-500 to-orange-600 text-white shadow-lg scale-110' 
+                                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                            }`}
+                                        >
+                                            {key}
+                                        </button>
                                     ))}
                                 </div>
                             </div>
 
-                            <div className="bg-white/90 backdrop-blur-sm p-2.5 rounded-xl shadow-sm border border-gray-100">
-                                <label className="text-xs font-bold text-gray-600 uppercase block mb-1.5">{t('common.note_range')}</label>
-                                <div className="flex items-center gap-1.5">
-                                    <input type="text" value={noteRange.low} onChange={e => setNoteRange({ ...noteRange, low: e.target.value })} className="flex-1 py-1.5 px-2 text-sm rounded-lg border border-gray-200 text-center font-semibold focus:border-amber-400 focus:outline-none" placeholder="C4" />
-                                    <span className="text-gray-400 text-sm">—</span>
-                                    <input type="text" value={noteRange.high} onChange={e => setNoteRange({ ...noteRange, high: e.target.value })} className="flex-1 py-1.5 px-2 text-sm rounded-lg border border-gray-200 text-center font-semibold focus:border-amber-400 focus:outline-none" placeholder="C5" />
+                            {/* Note Range */}
+                            <div className="bg-white/90 backdrop-blur-sm p-4 rounded-2xl shadow-md border border-gray-100">
+                                <label className="text-xs font-bold text-gray-600 uppercase block mb-3 flex items-center gap-2">
+                                    <span className="text-lg">🎹</span>
+                                    <span>{t('common.note_range')}</span>
+                                </label>
+                                <div className="flex items-center gap-3">
+                                    <input
+                                        type="text"
+                                        value={noteRange.low}
+                                        onChange={e => setNoteRange({ ...noteRange, low: e.target.value })}
+                                        className="flex-1 py-3 px-4 text-base rounded-xl border-2 border-gray-200 text-center font-bold focus:border-amber-400 focus:outline-none bg-white"
+                                        placeholder="C4"
+                                    />
+                                    <span className="text-gray-400 text-2xl font-bold">→</span>
+                                    <input
+                                        type="text"
+                                        value={noteRange.high}
+                                        onChange={e => setNoteRange({ ...noteRange, high: e.target.value })}
+                                        className="flex-1 py-3 px-4 text-base rounded-xl border-2 border-gray-200 text-center font-bold focus:border-amber-400 focus:outline-none bg-white"
+                                        placeholder="C5"
+                                    />
                                 </div>
                             </div>
 
-                            <div className="bg-amber-50/80 backdrop-blur-sm border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
-                                <p className="font-semibold mb-2 flex items-center gap-2">
-                                    <span>🎮</span>
+                            {/* Game Instructions */}
+                            <div className="bg-gradient-to-br from-amber-50 to-orange-50 p-4 rounded-2xl border-2 border-amber-200">
+                                <h3 className="text-sm font-bold text-amber-900 mb-2 flex items-center gap-2">
+                                    <span className="text-lg">🎮</span>
                                     <span>{t('challenge.game_mode_title')}</span>
-                                </p>
-                                <ul className="text-xs text-amber-700 space-y-1">
-                                    <li>{t('challenge.game_mode_desc_1')}</li>
-                                    <li>{t('challenge.game_mode_desc_2')}</li>
-                                    <li>{t('challenge.game_mode_desc_3')}</li>
+                                </h3>
+                                <ul className="text-xs text-amber-800 space-y-1.5 ml-7">
+                                    <li className="leading-relaxed">• {t('challenge.game_mode_desc_1')}</li>
+                                    <li className="leading-relaxed">• {t('challenge.game_mode_desc_2')}</li>
+                                    <li className="leading-relaxed">• {t('challenge.game_mode_desc_3')}</li>
                                 </ul>
                             </div>
 
-                            <button onClick={startGame} className="w-full bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-white font-black py-4 rounded-2xl shadow-xl active:scale-95 transition-transform flex items-center justify-center gap-3 text-xl mt-4 border-2 border-amber-400">
-                                <span className="text-3xl">▶️</span>
+                            {/* Start Button - HERO */}
+                            <button
+                                onClick={startGame}
+                                className="w-full bg-gradient-to-r from-amber-500 via-orange-600 to-amber-600 text-white font-black py-5 rounded-2xl shadow-2xl active:scale-95 transition-transform flex items-center justify-center gap-3 text-xl border-2 border-amber-400"
+                            >
+                                <span className="text-4xl">⚡</span>
                                 <span>{t('challenge.start_btn')}</span>
                             </button>
 
@@ -256,29 +358,52 @@ export default function ChallengeScreen() {
             )}
 
             {isPlaying && (
-                <div className="flex-1 flex flex-col bg-slate-50 overflow-hidden relative" onClick={handleTouchClick} onTouchStart={handleTouchClick}>
-                    <div className="absolute top-2 left-0 right-0 flex justify-center gap-4 z-20">
-                        <div className="bg-white/90 backdrop-blur px-6 py-2 rounded-xl shadow-md border border-gray-200 flex gap-8">
+                <div 
+                    className="flex-1 flex flex-col bg-gradient-to-br from-amber-100 to-orange-100 overflow-hidden relative" 
+                    onClick={handleTouchClick} 
+                    onTouchStart={handleTouchClick}
+                >
+                    {/* Stats Header */}
+                    <div className="absolute top-3 left-0 right-0 flex justify-center gap-3 z-20 px-4">
+                        <div className="bg-white/95 backdrop-blur-md px-6 py-3 rounded-2xl shadow-xl border-2 border-amber-200 flex gap-8">
                             <div className="flex flex-col items-center">
                                 <span className="text-xs font-bold text-blue-600 uppercase">{t('challenge.score_label')}</span>
-                                <span className="text-3xl font-bold text-blue-700">{score}</span>
+                                <span className="text-3xl font-black text-blue-700">{score}</span>
                             </div>
                             <div className="flex flex-col items-center">
                                 <span className="text-xs font-bold text-orange-500 uppercase">{t('challenge.combo_label')}</span>
-                                <span className="text-3xl font-bold text-orange-600">{combo}x</span>
+                                <span className="text-3xl font-black text-orange-600">{combo}x</span>
                             </div>
                         </div>
+
+                        {combo > 5 && (
+                            <div className="bg-gradient-to-r from-orange-500 to-red-600 px-4 py-3 rounded-2xl shadow-xl animate-pulse border-2 border-orange-400">
+                                <div className="text-white text-2xl font-black">🔥</div>
+                            </div>
+                        )}
                     </div>
 
+                    {/* Feedback */}
                     {feedback && (
-                        <div className="absolute top-20 left-0 right-0 z-30 flex justify-center pointer-events-none">
-                            <div className={`text-3xl font-black ${feedback.color} bg-white/95 px-6 py-2 rounded-full shadow-lg animate-bounce`}>
-                                {feedback.text}
+                        <div className="absolute top-24 left-0 right-0 z-30 flex justify-center pointer-events-none">
+                            <div className={`bg-white/95 px-8 py-4 rounded-2xl shadow-2xl animate-bounce border-4 ${
+                                feedback.color.includes('green') ? 'border-green-400' :
+                                feedback.color.includes('yellow') ? 'border-yellow-400' : 'border-red-400'
+                            }`}>
+                                <div className={`text-3xl font-black ${feedback.color} text-center`}>
+                                    {feedback.text}
+                                </div>
+                                {feedback.points && (
+                                    <div className="text-2xl font-black text-amber-600 text-center mt-1">
+                                        +{feedback.points}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
 
-                    <div className="flex-1 flex items-center justify-center">
+                    {/* Staff */}
+                    <div className="flex-1 flex items-center justify-center p-4">
                         <ChallengeStaff
                             notes={activeNotes}
                             speedPixelsPerFrame={0}
@@ -289,11 +414,39 @@ export default function ChallengeScreen() {
                         />
                     </div>
 
-                    <div className="absolute bottom-4 right-4 z-20">
-                        <button onClick={stopGame} className="bg-red-600 hover:bg-red-700 text-white font-bold px-6 py-3 rounded-full shadow-xl active:scale-95 transition-all flex items-center gap-2">
-                            <span className="text-xl">⏹️</span>
-                            <span>Stop</span>
-                        </button>
+                    {/* BPM Display */}
+                    <div className="absolute top-3 left-4 z-20">
+                        <div className="bg-gradient-to-r from-amber-500 to-orange-600 px-4 py-2 rounded-2xl shadow-xl border-2 border-amber-400">
+                            <div className="text-xs font-bold text-white/80 uppercase">BPM</div>
+                            <div className="text-2xl font-black text-white">{bpm}</div>
+                        </div>
+                    </div>
+
+                    {/* Best Combo */}
+                    {bestCombo > combo && (
+                        <div className="absolute top-3 right-4 z-20">
+                            <div className="bg-white/95 backdrop-blur-md px-4 py-2 rounded-2xl shadow-xl border-2 border-purple-200">
+                                <div className="text-xs font-bold text-purple-600 uppercase">Best</div>
+                                <div className="text-2xl font-black text-purple-700">{bestCombo}x</div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Stop Button */}
+                    <button
+                        onClick={stopGame}
+                        className="absolute bottom-4 right-4 bg-gradient-to-r from-red-500 to-red-600 text-white font-bold px-6 py-3 rounded-2xl shadow-2xl active:scale-95 transition-all z-40 flex items-center gap-2 border-2 border-red-400"
+                    >
+                        <span className="text-xl">⏹️</span>
+                        <span className="font-black">Stop</span>
+                    </button>
+
+                    {/* Instructions Hint */}
+                    <div className="absolute bottom-4 left-4 z-30 bg-white/95 backdrop-blur-sm px-4 py-2 rounded-2xl shadow-lg border-2 border-amber-200">
+                        <div className="text-xs font-bold text-amber-600 flex items-center gap-2">
+                            <span className="text-lg">👆</span>
+                            <span>Tap screen or use MIDI</span>
+                        </div>
                     </div>
                 </div>
             )}

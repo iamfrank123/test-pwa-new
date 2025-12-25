@@ -13,15 +13,13 @@ interface ScrollingStaffProps {
     currentNoteIndex: number;
     keySignature: KeySignature;
     feedbackStatus: 'idle' | 'correct' | 'incorrect';
-    isMobile?: boolean;
 }
 
 export default function ScrollingStaff({
     notes,
     currentNoteIndex,
     keySignature,
-    feedbackStatus,
-    isMobile = false
+    feedbackStatus
 }: ScrollingStaffProps) {
     const { t } = useTranslation();
     const containerRef = useRef<HTMLDivElement>(null);
@@ -49,27 +47,29 @@ export default function ScrollingStaff({
             renderDiv.id = uniqueId;
             renderDiv.style.overflowX = 'auto';
             renderDiv.style.overflowY = 'hidden';
-            // Hide scrollbar for cleaner look on mobile
-            if (isMobile) {
-                renderDiv.style.scrollbarWidth = 'none';
-                (renderDiv.style as any).msOverflowStyle = 'none';
-            }
             containerRef.current.appendChild(renderDiv);
 
             // Use Vex.Flow.Renderer instead of Factory for more control
             const VF = Vex.Flow;
             const renderer = new VF.Renderer(renderDiv, VF.Renderer.Backends.SVG);
 
-            // Create notes (take first 20 for desktop, 8 for mobile to fit screen)
-            const displayCount = isMobile ? 8 : 20;
-            const displayNotes = notes.slice(0, displayCount);
+            // Create notes (take first 20)
+            // Mobile detection and responsive sizing
+            const isMobile = window.innerWidth < 768;
 
-            // Use dynamic width based on note count, but cap it or scale it
-            // Compact mode for mobile
-            const noteSpacing = isMobile ? 50 : 120;
-            const minWidth = isMobile ? 300 : 800;
-            const contentWidth = Math.max(minWidth, displayNotes.length * noteSpacing + (isMobile ? 50 : 100));
-            const height = isMobile ? 150 : 250;
+            // Adjust notes count and spacing for mobile
+            const notesToShow = isMobile ? 6 : 12; // Significantly reduced for mobile compact view
+            const noteSpacing = isMobile ? 50 : 100;
+            const displayNotes = notes.slice(0, notesToShow);
+
+            // Calculate width to fit container or appropriate scrolling width
+            const containerWidth = containerRef.current.clientWidth;
+            // On mobile, we try to fit within the screen to avoid scrolling if possible, 
+            // or just ensure it's not massively overflowing with empty space.
+            const contentWidth = Math.max(containerWidth, displayNotes.length * noteSpacing + (isMobile ? 20 : 50));
+
+            // Reduced height for mobile to be more compact
+            const height = isMobile ? 180 : 250;
             renderer.resize(contentWidth, height);
 
             const context = renderer.getContext();
@@ -161,11 +161,11 @@ export default function ScrollingStaff({
             }
         }
 
-    }, [notes, currentNoteIndex, keySignature, feedbackStatus, t, isMobile]);
+    }, [notes, currentNoteIndex, keySignature, feedbackStatus, t]);
 
     return (
-        <div className={`${isMobile ? 'bg-white/95 rounded-xl shadow-md p-2 mb-2' : 'bg-white rounded-xl shadow-lg p-8 mb-6'}`}>
-            <h2 className={`${isMobile ? 'text-lg' : 'text-2xl'} font-bold text-gray-800 mb-4 text-center`}>
+        <div className="bg-white rounded-xl shadow-lg p-8 mb-6">
+            <h2 className="text-2xl font-bold text-gray-800 mb-4 text-center">
                 {t('sight_reading.staff_title')}
             </h2>
 
@@ -173,7 +173,7 @@ export default function ScrollingStaff({
                 <>
                     <div
                         ref={containerRef}
-                        className={`flex justify-start items-center ${isMobile ? 'min-h-[150px]' : 'min-h-[250px]'} w-full overflow-x-auto overflow-y-hidden border-2 border-gray-200 rounded-lg`}
+                        className="flex justify-start items-center min-h-[180px] md:min-h-[250px] w-full overflow-x-auto overflow-y-hidden border-2 border-gray-200 rounded-lg"
                         style={{ maxWidth: '100%' }}
                     />
 

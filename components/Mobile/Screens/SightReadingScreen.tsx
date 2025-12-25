@@ -33,8 +33,23 @@ export default function SightReadingScreen() {
     const queueManagerRef = useRef<NoteQueueManager | null>(null);
     const isProcessingRef = useRef(false);
 
+    // Haptic feedback
+    const haptic = useCallback((intensity: 'light' | 'medium' | 'heavy' | 'success' | 'error' = 'light') => {
+        if (navigator.vibrate) {
+            const patterns = {
+                light: 10,
+                medium: 20,
+                heavy: 30,
+                success: [10, 50, 10],
+                error: [20, 100, 20]
+            };
+            navigator.vibrate(patterns[intensity] || 10);
+        }
+    }, []);
+
     // Start exercise
     const startGame = useCallback(async () => {
+        haptic('medium');
         setIsExerciseActive(true);
         await requestFullscreen();
         await lockLandscape();
@@ -48,10 +63,11 @@ export default function SightReadingScreen() {
         setIsPlaying(true);
         setFeedbackStatus('idle');
         setStats({ perfect: 0, good: 0, miss: 0 });
-    }, [keySignature, noteRange, setIsExerciseActive, requestFullscreen, lockLandscape]);
+    }, [keySignature, noteRange, setIsExerciseActive, requestFullscreen, lockLandscape, haptic]);
 
     // Stop exercise
     const stopGame = useCallback(async () => {
+        haptic('medium');
         setIsPlaying(false);
         setNoteQueue([]);
         setCurrentNoteIndex(0);
@@ -60,7 +76,7 @@ export default function SightReadingScreen() {
         setIsExerciseActive(false);
         await exitFullscreen();
         await unlock();
-    }, [setIsExerciseActive, exitFullscreen, unlock]);
+    }, [setIsExerciseActive, exitFullscreen, unlock, haptic]);
 
     // MIDI handler
     const handleMIDINote = useCallback((event: MIDINoteEvent) => {
@@ -81,6 +97,7 @@ export default function SightReadingScreen() {
             manager.shiftQueue();
             setNoteQueue([...manager.getAllNotes()]);
             setFeedbackStatus('correct');
+            haptic('success');
             setTimeout(() => setFeedbackStatus('idle'), 500);
         } else {
             isProcessingRef.current = true;
@@ -88,29 +105,51 @@ export default function SightReadingScreen() {
 
             setFeedbackStatus('incorrect');
             setStats(s => ({ ...s, miss: s.miss + 1 }));
+            haptic('error');
             setTimeout(() => setFeedbackStatus('idle'), 500);
         }
-    }, [isPlaying]);
+    }, [isPlaying, haptic]);
 
     useMIDIInput(handleMIDINote);
 
     return (
-        <div className="flex flex-col h-full bg-gradient-to-br from-stone-50 to-stone-100 overflow-hidden">
+        <div className="flex flex-col h-full bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 overflow-hidden">
             {/* Settings Panel - Portrait Mode */}
             {!isPlaying && (
                 <>
                     <MobileScreenHeader title={t('sight_reading.title')} />
-                    <div className="flex-1 overflow-y-auto px-3 py-3 pb-safe">
-                        <div className="max-w-md mx-auto space-y-2.5">
+                    <div className="flex-1 overflow-y-auto px-4 py-4 pb-safe">
+                        <div className="max-w-md mx-auto space-y-3">
+                            {/* MIDI Connection Status */}
+                            <div className="bg-gradient-to-r from-blue-500 to-indigo-600 p-4 rounded-2xl shadow-lg">
+                                <div className="flex items-center gap-3 mb-2">
+                                    <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-sm">
+                                        <span className="text-2xl">🎹</span>
+                                    </div>
+                                    <div className="flex-1">
+                                        <h3 className="text-white font-bold text-sm">{t('common.midi_connection')}</h3>
+                                        <p className="text-white/80 text-xs">{t('common.midi_connection_sight_reading')}</p>
+                                    </div>
+                                    <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse shadow-lg" />
+                                </div>
+                            </div>
+
                             {/* Key Signature */}
-                            <div className="bg-white/90 backdrop-blur-sm p-2.5 rounded-xl shadow-sm border border-gray-100">
-                                <label className="text-xs font-bold text-gray-600 uppercase block mb-1.5">{t('common.key')}</label>
-                                <div className="grid grid-cols-5 gap-1.5">
+                            <div className="bg-white/90 backdrop-blur-sm p-4 rounded-2xl shadow-md border border-gray-100">
+                                <label className="text-xs font-bold text-gray-600 uppercase block mb-3 flex items-center gap-2">
+                                    <span className="text-lg">🎼</span>
+                                    <span>{t('common.key')}</span>
+                                </label>
+                                <div className="grid grid-cols-5 gap-2">
                                     {KEY_SIGNATURES.map(key => (
                                         <button
                                             key={key}
-                                            onClick={() => setKeySignature(key)}
-                                            className={`py-2 rounded-lg text-sm font-bold transition-all ${keySignature === key ? 'bg-blue-500 text-white shadow-md scale-105' : 'bg-gray-100 text-gray-600'}`}
+                                            onClick={() => { haptic('light'); setKeySignature(key); }}
+                                            className={`py-3 rounded-xl text-sm font-bold transition-all ${
+                                                keySignature === key 
+                                                    ? 'bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-lg scale-110' 
+                                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                            }`}
                                         >
                                             {key}
                                         </button>
@@ -118,44 +157,57 @@ export default function SightReadingScreen() {
                                 </div>
                             </div>
 
-                            {/* Note Range - Compact */}
-                            <div className="bg-white/90 backdrop-blur-sm p-2.5 rounded-xl shadow-sm border border-gray-100">
-                                <label className="text-xs font-bold text-gray-600 uppercase block mb-1.5">{t('common.note_range')}</label>
-                                <div className="flex items-center gap-1.5">
-                                    <input
-                                        type="text"
-                                        value={noteRange.low}
-                                        onChange={e => setNoteRange({ ...noteRange, low: e.target.value })}
-                                        className="flex-1 py-1.5 px-2 text-sm rounded-lg border border-gray-200 text-center font-semibold focus:border-blue-400 focus:outline-none"
-                                        placeholder="C4"
-                                    />
-                                    <span className="text-gray-400 text-sm">—</span>
-                                    <input
-                                        type="text"
-                                        value={noteRange.high}
-                                        onChange={e => setNoteRange({ ...noteRange, high: e.target.value })}
-                                        className="flex-1 py-1.5 px-2 text-sm rounded-lg border border-gray-200 text-center font-semibold focus:border-blue-400 focus:outline-none"
-                                        placeholder="C5"
-                                    />
+                            {/* Note Range */}
+                            <div className="bg-white/90 backdrop-blur-sm p-4 rounded-2xl shadow-md border border-gray-100">
+                                <label className="text-xs font-bold text-gray-600 uppercase block mb-3 flex items-center gap-2">
+                                    <span className="text-lg">🎵</span>
+                                    <span>{t('common.note_range')}</span>
+                                </label>
+                                <div className="flex items-center gap-3">
+                                    <div className="flex-1">
+                                        <label className="text-xs text-gray-500 font-medium mb-1 block">Low Note</label>
+                                        <input
+                                            type="text"
+                                            value={noteRange.low}
+                                            onChange={e => setNoteRange({ ...noteRange, low: e.target.value })}
+                                            className="w-full py-3 px-4 text-base rounded-xl border-2 border-gray-200 text-center font-bold focus:border-blue-400 focus:outline-none bg-white shadow-sm"
+                                            placeholder="C4"
+                                        />
+                                    </div>
+                                    <div className="text-gray-400 text-2xl font-bold pt-6">→</div>
+                                    <div className="flex-1">
+                                        <label className="text-xs text-gray-500 font-medium mb-1 block">High Note</label>
+                                        <input
+                                            type="text"
+                                            value={noteRange.high}
+                                            onChange={e => setNoteRange({ ...noteRange, high: e.target.value })}
+                                            className="w-full py-3 px-4 text-base rounded-xl border-2 border-gray-200 text-center font-bold focus:border-blue-400 focus:outline-none bg-white shadow-sm"
+                                            placeholder="C5"
+                                        />
+                                    </div>
                                 </div>
                             </div>
 
-                            {/* MIDI Info */}
-                            <div className="bg-blue-50/80 backdrop-blur-sm border border-blue-200 rounded-xl p-3 text-sm text-blue-800">
-                                <p className="font-semibold mb-1 flex items-center gap-2">
-                                    <span>🎹</span>
-                                    <span>{t('common.midi_connection')}</span>
-                                </p>
-                                <p className="text-xs text-blue-700">
-                                    {t('common.midi_connection_sight_reading')}
-                                </p>
+                            {/* Instructions */}
+                            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-2xl border-2 border-blue-200">
+                                <h3 className="text-sm font-bold text-blue-900 mb-2 flex items-center gap-2">
+                                    <span className="text-lg">💡</span>
+                                    <span>How to Play</span>
+                                </h3>
+                                <ul className="text-xs text-blue-800 space-y-1.5 ml-7">
+                                    <li className="leading-relaxed">• Connect your MIDI keyboard</li>
+                                    <li className="leading-relaxed">• Play the highlighted note</li>
+                                    <li className="leading-relaxed">• Progress through the staff</li>
+                                    <li className="leading-relaxed">• Build your sight-reading skills!</li>
+                                </ul>
                             </div>
 
+                            {/* Start Button - HERO */}
                             <button
                                 onClick={startGame}
-                                className="w-full bg-gradient-to-r from-blue-500 via-indigo-500 to-blue-600 text-white font-black py-4 rounded-2xl shadow-xl active:scale-95 transition-transform flex items-center justify-center gap-3 text-xl mt-4 border-2 border-blue-400"
+                                className="w-full bg-gradient-to-r from-blue-500 via-indigo-600 to-blue-600 text-white font-black py-5 rounded-2xl shadow-2xl active:scale-95 transition-transform flex items-center justify-center gap-3 text-xl border-2 border-blue-400"
                             >
-                                <span className="text-3xl">▶️</span>
+                                <span className="text-4xl">▶️</span>
                                 <span>{t('common.start')}</span>
                             </button>
 
@@ -167,50 +219,75 @@ export default function SightReadingScreen() {
 
             {/* Exercise Area - Landscape Mode */}
             {isPlaying && (
-                <div className="flex-1 flex flex-col bg-slate-50 overflow-hidden">
+                <div className="flex-1 flex flex-col bg-gradient-to-br from-blue-100 to-indigo-100 overflow-hidden">
                     {/* Stats Overlay */}
-                    <div className="absolute top-2 left-0 right-0 flex justify-center gap-4 z-20">
-                        <div className="bg-white/90 backdrop-blur px-4 py-2 rounded-xl shadow-md border border-gray-200 flex gap-6">
+                    <div className="absolute top-3 left-0 right-0 flex justify-center gap-3 z-20 px-4">
+                        <div className="bg-white/95 backdrop-blur-md px-6 py-3 rounded-2xl shadow-xl border-2 border-blue-200 flex gap-8">
                             <div className="flex flex-col items-center">
-                                <span className="text-xs font-bold text-green-600 uppercase">{t('stats.perfect')}</span>
-                                <span className="text-2xl font-bold text-green-700">{stats.perfect}</span>
+                                <span className="text-xs font-bold text-green-600 uppercase">Perfect</span>
+                                <span className="text-3xl font-black text-green-700">{stats.perfect}</span>
                             </div>
                             <div className="flex flex-col items-center">
-                                <span className="text-xs font-bold text-red-500 uppercase">{t('stats.miss')}</span>
-                                <span className="text-2xl font-bold text-red-600">{stats.miss}</span>
+                                <span className="text-xs font-bold text-red-500 uppercase">Miss</span>
+                                <span className="text-3xl font-black text-red-600">{stats.miss}</span>
                             </div>
                         </div>
                     </div>
 
                     {/* Feedback */}
                     {feedbackStatus !== 'idle' && (
-                        <div className="absolute top-20 left-0 right-0 z-30 flex justify-center pointer-events-none">
-                            <div className={`text-2xl font-black px-6 py-2 rounded-full shadow-lg ${feedbackStatus === 'correct' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}`}>
-                                {feedbackStatus === 'correct' ? `✓ ${t('common.correct')}` : `✗ ${t('stats.miss')}`}
+                        <div className="absolute top-24 left-0 right-0 z-30 flex justify-center pointer-events-none">
+                            <div className={`text-3xl font-black px-8 py-4 rounded-2xl shadow-2xl animate-bounce border-4 ${
+                                feedbackStatus === 'correct' 
+                                    ? 'bg-gradient-to-r from-green-500 to-green-600 text-white border-green-400' 
+                                    : 'bg-gradient-to-r from-red-500 to-red-600 text-white border-red-400'
+                            }`}>
+                                {feedbackStatus === 'correct' ? `✓ ${t('common.correct')}!` : `✗ ${t('stats.miss')}`}
                             </div>
                         </div>
                     )}
 
                     {/* Staff */}
-                    <div className="flex-1 flex items-center justify-center p-2">
+                    <div className="flex-1 flex items-center justify-center p-4">
                         <ScrollingStaff
                             notes={noteQueue}
                             currentNoteIndex={currentNoteIndex}
                             keySignature={keySignature}
                             feedbackStatus={feedbackStatus}
-                            isMobile={true}
                         />
                     </div>
 
+                    {/* Key Signature Display */}
+                    <div className="absolute top-3 left-4 z-20">
+                        <div className="bg-gradient-to-r from-blue-500 to-indigo-600 px-4 py-2 rounded-2xl shadow-xl border-2 border-blue-400">
+                            <div className="text-xs font-bold text-white/80 uppercase">Key</div>
+                            <div className="text-2xl font-black text-white">{keySignature}</div>
+                        </div>
+                    </div>
+
+                    {/* Progress Display */}
+                    <div className="absolute top-3 right-4 z-20">
+                        <div className="bg-white/95 backdrop-blur-md px-4 py-2 rounded-2xl shadow-xl border-2 border-purple-200">
+                            <div className="text-xs font-bold text-purple-600 uppercase">Progress</div>
+                            <div className="text-2xl font-black text-purple-700">{currentNoteIndex + 1}/{noteQueue.length}</div>
+                        </div>
+                    </div>
+
                     {/* Stop Button */}
-                    <div className="absolute bottom-4 right-4 z-20">
-                        <button
-                            onClick={stopGame}
-                            className="bg-red-600 hover:bg-red-700 text-white font-bold px-6 py-3 rounded-full shadow-xl active:scale-95 transition-all flex items-center gap-2"
-                        >
-                            <span className="text-xl">⏹️</span>
-                            <span>{t('common.stop')}</span>
-                        </button>
+                    <button
+                        onClick={stopGame}
+                        className="absolute bottom-4 right-4 bg-gradient-to-r from-red-500 to-red-600 text-white font-bold px-6 py-3 rounded-2xl shadow-2xl active:scale-95 transition-all z-40 flex items-center gap-2 border-2 border-red-400"
+                    >
+                        <span className="text-xl">⏹️</span>
+                        <span className="font-black">{t('common.stop')}</span>
+                    </button>
+
+                    {/* MIDI Hint */}
+                    <div className="absolute bottom-4 left-4 z-30 bg-white/95 backdrop-blur-sm px-4 py-2 rounded-2xl shadow-lg border-2 border-blue-200">
+                        <div className="text-xs font-bold text-blue-600 flex items-center gap-2">
+                            <span className="text-lg">🎹</span>
+                            <span>Play on your MIDI keyboard</span>
+                        </div>
                     </div>
                 </div>
             )}
