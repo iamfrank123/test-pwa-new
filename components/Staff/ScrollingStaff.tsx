@@ -13,7 +13,7 @@ interface ScrollingStaffProps {
     currentNoteIndex: number;
     keySignature: KeySignature;
     feedbackStatus: 'idle' | 'correct' | 'incorrect';
-    compact?: boolean;
+    isMobile?: boolean;
 }
 
 export default function ScrollingStaff({
@@ -21,7 +21,7 @@ export default function ScrollingStaff({
     currentNoteIndex,
     keySignature,
     feedbackStatus,
-    compact = false
+    isMobile = false
 }: ScrollingStaffProps) {
     const { t } = useTranslation();
     const containerRef = useRef<HTMLDivElement>(null);
@@ -49,34 +49,33 @@ export default function ScrollingStaff({
             renderDiv.id = uniqueId;
             renderDiv.style.overflowX = 'auto';
             renderDiv.style.overflowY = 'hidden';
-            renderDiv.style.whiteSpace = 'nowrap'; // Ensure no wrapping
+            // Hide scrollbar for cleaner look on mobile
+            if (isMobile) {
+                renderDiv.style.scrollbarWidth = 'none';
+                (renderDiv.style as any).msOverflowStyle = 'none';
+            }
             containerRef.current.appendChild(renderDiv);
 
             // Use Vex.Flow.Renderer instead of Factory for more control
             const VF = Vex.Flow;
             const renderer = new VF.Renderer(renderDiv, VF.Renderer.Backends.SVG);
 
-            // Create notes (take first 20)
-            const displayNotes = notes.slice(0, 20);
+            // Create notes (take first 20 for desktop, 8 for mobile to fit screen)
+            const displayCount = isMobile ? 8 : 20;
+            const displayNotes = notes.slice(0, displayCount);
 
             // Use dynamic width based on note count, but cap it or scale it
-            const noteSpacing = compact ? 60 : 120;
-            const minWidth = compact ? 400 : 800;
-            const contentWidth = Math.max(minWidth, displayNotes.length * noteSpacing + 100);
-            const height = compact ? 120 : 250;
+            // Compact mode for mobile
+            const noteSpacing = isMobile ? 50 : 120;
+            const minWidth = isMobile ? 300 : 800;
+            const contentWidth = Math.max(minWidth, displayNotes.length * noteSpacing + (isMobile ? 50 : 100));
+            const height = isMobile ? 150 : 250;
             renderer.resize(contentWidth, height);
 
             const context = renderer.getContext();
 
-            // Scale context if compact
-            if (compact) {
-                context.scale(0.8, 0.8);
-                renderer.resize(contentWidth * 0.8, height * 0.8);
-            }
-
             // Create a stave
-            const staveY = compact ? 10 : 40;
-            const stave = new VF.Stave(10, staveY, contentWidth - 20);
+            const stave = new VF.Stave(10, 40, contentWidth - 20);
 
             // Force Treble clef as requested to prevent visual jumping
             const clef = 'treble';
@@ -162,11 +161,11 @@ export default function ScrollingStaff({
             }
         }
 
-    }, [notes, currentNoteIndex, keySignature, feedbackStatus, t]);
+    }, [notes, currentNoteIndex, keySignature, feedbackStatus, t, isMobile]);
 
     return (
-        <div className={`bg-white rounded-xl shadow-lg ${compact ? 'p-2' : 'p-8'} mb-6`}>
-            <h2 className="text-2xl font-bold text-gray-800 mb-4 text-center">
+        <div className={`${isMobile ? 'bg-white/95 rounded-xl shadow-md p-2 mb-2' : 'bg-white rounded-xl shadow-lg p-8 mb-6'}`}>
+            <h2 className={`${isMobile ? 'text-lg' : 'text-2xl'} font-bold text-gray-800 mb-4 text-center`}>
                 {t('sight_reading.staff_title')}
             </h2>
 
@@ -174,7 +173,7 @@ export default function ScrollingStaff({
                 <>
                     <div
                         ref={containerRef}
-                        className={`flex justify-start items-center ${compact ? 'min-h-[120px]' : 'min-h-[250px]'} w-full overflow-x-auto overflow-y-hidden border-2 border-gray-200 rounded-lg`}
+                        className={`flex justify-start items-center ${isMobile ? 'min-h-[150px]' : 'min-h-[250px]'} w-full overflow-x-auto overflow-y-hidden border-2 border-gray-200 rounded-lg`}
                         style={{ maxWidth: '100%' }}
                     />
 

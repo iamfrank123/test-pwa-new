@@ -192,13 +192,13 @@ export default function SightReadingScreen() {
                     )}
 
                     {/* Staff */}
-                    <div className="flex-1 flex items-center justify-center">
+                    <div className="flex-1 flex items-center justify-center p-2">
                         <ScrollingStaff
                             notes={noteQueue}
                             currentNoteIndex={currentNoteIndex}
                             keySignature={keySignature}
                             feedbackStatus={feedbackStatus}
-                            compact={true}
+                            isMobile={true}
                         />
                     </div>
 
