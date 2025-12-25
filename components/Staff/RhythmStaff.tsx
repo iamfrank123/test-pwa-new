@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Vex } from 'vexflow';
 import { RhythmNote } from '@/lib/generator/rhythm-generator';
 
@@ -25,23 +25,36 @@ export default function RhythmStaff({ notes, hitX }: RhythmStaffProps) {
     const rendererRef = useRef<any>(null);
     const contextRef = useRef<any>(null);
 
-    const STAFF_WIDTH = 1000;
+    const [staffWidth, setStaffWidth] = useState(800);
     const STAFF_HEIGHT = 200;
 
+    // Use a ResizeObserver to handle responsiveness without infinite loops
     useEffect(() => {
         if (!containerRef.current) return;
 
+        const resizeObserver = new ResizeObserver((entries) => {
+            for (let entry of entries) {
+                const newWidth = entry.contentRect.width;
+                if (newWidth > 0 && Math.abs(newWidth - staffWidth) > 10) {
+                    setStaffWidth(newWidth);
+                }
+            }
+        });
+
+        resizeObserver.observe(containerRef.current);
+
+        // Initial setup for VexFlow
         containerRef.current.innerHTML = '';
         const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
-        renderer.resize(STAFF_WIDTH, STAFF_HEIGHT);
+        renderer.resize(staffWidth, STAFF_HEIGHT);
         const context = renderer.getContext();
         rendererRef.current = renderer;
         contextRef.current = context;
 
-        // Initial render
         renderFrame();
 
-    }, []);
+        return () => resizeObserver.disconnect();
+    }, [staffWidth]);
 
     const renderFrame = () => {
         if (!contextRef.current) return;
@@ -49,50 +62,38 @@ export default function RhythmStaff({ notes, hitX }: RhythmStaffProps) {
         context.clear();
 
         // 1. Draw Static Staff (Single Line)
-        // VexFlow Stave(x, y, width)
-        // num_lines = 1 for percussion/rhythm
-        const stave = new Stave(0, 70, STAFF_WIDTH);
-        stave.setConfigForLine(0, { visible: true }); // Line 0 is top
-        // Actually VexFlow 1-line staff:
+        const stave = new Stave(0, 70, staffWidth);
+        stave.setConfigForLine(0, { visible: true });
         stave.setNumLines(1);
         stave.setContext(context).draw();
 
         // 2. Draw Hit Marker (Green Line)
         context.save();
         context.beginPath();
-        context.rect(hitX - 20, 50, 40, 60); // Centered on hitX
+        context.rect(hitX - 20, 50, 40, 60);
         context.setFillStyle('rgba(34, 197, 94, 0.2)');
         context.fill();
         context.restore();
 
         // 3. Draw Notes
         notes.forEach(gameNote => {
-            if (gameNote.x < -50 || gameNote.x > STAFF_WIDTH + 50) return;
+            if (gameNote.x < -50 || gameNote.x > staffWidth + 50) return;
 
-            // Handle Bar Line
             if (gameNote.note.duration === 'bar') {
                 context.save();
                 context.beginPath();
-                // Draw vertical line across staff height
                 context.moveTo(gameNote.x, 70);
-                context.lineTo(gameNote.x, 70 + 80); // Staff height roughly
+                context.lineTo(gameNote.x, 70 + 80);
                 context.lineWidth = 2;
-                context.setStrokeStyle('#666666'); // Dark gray
+                context.setStrokeStyle('#666666');
                 context.stroke();
                 context.restore();
                 return;
             }
 
-            // Map duration to VexFlow
             const duration = gameNote.note.duration;
             const type = gameNote.note.isRest ? 'r' : '';
-
-            // Construct StaveNote
-            // "b/4" is default for single line (center)
-            const noteKey = gameNote.note.isRest ? 'b/4' : 'b/4';
-
-            // Catch invalid keys for VexFlow just in case
-
+            const noteKey = 'b/4';
 
             const vfNote = new StaveNote({
                 clef: 'percussion',
@@ -101,7 +102,6 @@ export default function RhythmStaff({ notes, hitX }: RhythmStaffProps) {
                 auto_stem: true
             });
 
-            // Style
             let color = '#000000';
             if (gameNote.status === 'match_perfect') color = '#22c55e';
             else if (gameNote.status === 'match_good') color = '#eab308';
@@ -110,9 +110,6 @@ export default function RhythmStaff({ notes, hitX }: RhythmStaffProps) {
 
             vfNote.setStyle({ fillStyle: color, strokeStyle: color });
 
-            // Absolute Positioning Hack (same as ChallengeStaff)
-            // Create a tick context for layout (needed for draw)
-            // But force X position.
             const tickContext = new Vex.Flow.TickContext();
             tickContext.addTickable(vfNote);
             tickContext.preFormat().setX(gameNote.x);
@@ -129,8 +126,8 @@ export default function RhythmStaff({ notes, hitX }: RhythmStaffProps) {
     }, [notes]);
 
     return (
-        <div className="relative">
-            <div ref={containerRef} className="bg-white rounded-xl shadow-lg border-2 border-gray-200 overflow-hidden" />
+        <div className="w-full max-w-full overflow-hidden">
+            <div ref={containerRef} className="bg-white rounded-xl shadow-lg border-2 border-gray-200 w-full" style={{ minHeight: STAFF_HEIGHT }} />
         </div>
     );
 }

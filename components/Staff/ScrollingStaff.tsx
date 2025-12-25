@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { GeneratedNote, KeySignature } from '@/lib/generator/types';
 import { getKeySignatureInfo } from '@/lib/generator/note-generator';
 import { Vex } from 'vexflow';
+import { useTranslation } from '@/context/LanguageContext';
 
 const { Factory, StaveNote, Voice, Formatter } = Vex.Flow;
 
@@ -12,14 +13,17 @@ interface ScrollingStaffProps {
     currentNoteIndex: number;
     keySignature: KeySignature;
     feedbackStatus: 'idle' | 'correct' | 'incorrect';
+    compact?: boolean;
 }
 
 export default function ScrollingStaff({
     notes,
     currentNoteIndex,
     keySignature,
-    feedbackStatus
+    feedbackStatus,
+    compact = false
 }: ScrollingStaffProps) {
+    const { t } = useTranslation();
     const containerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -45,25 +49,37 @@ export default function ScrollingStaff({
             renderDiv.id = uniqueId;
             renderDiv.style.overflowX = 'auto';
             renderDiv.style.overflowY = 'hidden';
+            renderDiv.style.whiteSpace = 'nowrap'; // Ensure no wrapping
             containerRef.current.appendChild(renderDiv);
 
             // Use Vex.Flow.Renderer instead of Factory for more control
             const VF = Vex.Flow;
             const renderer = new VF.Renderer(renderDiv, VF.Renderer.Backends.SVG);
 
-            // Set dimensions to fit ~20 notes
-            const width = 2400;
-            const height = 250;
-            renderer.resize(width, height);
+            // Create notes (take first 20)
+            const displayNotes = notes.slice(0, 20);
+
+            // Use dynamic width based on note count, but cap it or scale it
+            const noteSpacing = compact ? 60 : 120;
+            const minWidth = compact ? 400 : 800;
+            const contentWidth = Math.max(minWidth, displayNotes.length * noteSpacing + 100);
+            const height = compact ? 120 : 250;
+            renderer.resize(contentWidth, height);
 
             const context = renderer.getContext();
 
+            // Scale context if compact
+            if (compact) {
+                context.scale(0.8, 0.8);
+                renderer.resize(contentWidth * 0.8, height * 0.8);
+            }
+
             // Create a stave
-            const stave = new VF.Stave(10, 40, width - 20);
+            const staveY = compact ? 10 : 40;
+            const stave = new VF.Stave(10, staveY, contentWidth - 20);
 
             // Force Treble clef as requested to prevent visual jumping
             const clef = 'treble';
-
             stave.addClef(clef);
 
             // Add key signature
@@ -73,9 +89,6 @@ export default function ScrollingStaff({
             stave.addKeySignature(keyStr);
 
             stave.setContext(context).draw();
-
-            // Create notes (take first 20)
-            const displayNotes = notes.slice(0, 20);
             const vfNotes = displayNotes.map(note => {
                 const accidentalStr = note.accidental === '#' ? '#' : note.accidental === 'b' ? 'b' : '';
                 const noteStr = `${note.note.toLowerCase()}${accidentalStr}/${note.octave}`;
@@ -99,7 +112,7 @@ export default function ScrollingStaff({
             voice.addTickables(vfNotes);
 
             // Format and draw
-            new Formatter().joinVoices([voice]).format([voice], width - 100);
+            new Formatter().joinVoices([voice]).format([voice], contentWidth - 100);
             voice.draw(context, stave);
 
             // Add smooth transition to the SVG for note movements
@@ -143,42 +156,42 @@ export default function ScrollingStaff({
             if (containerRef.current) {
                 containerRef.current.innerHTML = `
                     <div style="color: red; padding: 20px;">
-                        <strong>Errore rendering:</strong> ${error}
+                        <strong>${t('sight_reading.render_error')}:</strong> ${error}
                     </div>
                 `;
             }
         }
 
-    }, [notes, currentNoteIndex, keySignature, feedbackStatus]);
+    }, [notes, currentNoteIndex, keySignature, feedbackStatus, t]);
 
     return (
-        <div className="bg-white rounded-xl shadow-lg p-8 mb-6">
+        <div className={`bg-white rounded-xl shadow-lg ${compact ? 'p-2' : 'p-8'} mb-6`}>
             <h2 className="text-2xl font-bold text-gray-800 mb-4 text-center">
-                🎵 Pentagramma - Sight Reading
+                {t('sight_reading.staff_title')}
             </h2>
 
             {notes.length > 0 ? (
                 <>
                     <div
                         ref={containerRef}
-                        className="flex justify-start items-center min-h-[250px] overflow-x-auto overflow-y-hidden border-2 border-gray-200 rounded-lg"
+                        className={`flex justify-start items-center ${compact ? 'min-h-[120px]' : 'min-h-[250px]'} w-full overflow-x-auto overflow-y-hidden border-2 border-gray-200 rounded-lg`}
                         style={{ maxWidth: '100%' }}
                     />
 
                     <div className="text-center mt-4 text-gray-600">
                         <p className="text-sm">
                             <span className="inline-block w-4 h-4 bg-blue-600 rounded-full mr-2"></span>
-                            Nota corrente da suonare (prima nota)
+                            {t('sight_reading.current_note_label')}
                         </p>
                         <p className="text-sm mt-1">
                             <span className="inline-block w-4 h-4 bg-gray-400 rounded-full mr-2"></span>
-                            Note già suonate
+                            {t('sight_reading.played_notes_label')}
                         </p>
                     </div>
                 </>
             ) : (
                 <div className="text-center text-gray-500 py-20">
-                    <p className="text-xl">Premi <strong>START</strong> per iniziare l'esercizio</p>
+                    <p className="text-xl">{t('sight_reading.start_prompt')}</p>
                 </div>
             )}
         </div>

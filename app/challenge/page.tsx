@@ -7,8 +7,8 @@ import { generateRandomNote, checkNoteMatch } from '@/lib/generator/note-generat
 import { GeneratedNote, KeySignature, NoteRange } from '@/lib/generator/types';
 import { useMIDIInput } from '@/hooks/useMIDIInput';
 import { MIDINoteEvent } from '@/lib/types/midi';
+import { useTranslation } from '@/context/LanguageContext';
 
-// Game Constants
 // Game Constants
 const SPAWN_X = 900;
 const HIT_X = 100;
@@ -26,6 +26,7 @@ interface GameNote {
 }
 
 export default function ChallengePage() {
+    const { t } = useTranslation();
     // Settings
     const [bpm, setBpm] = useState(60);
     const [keySignature, setKeySignature] = useState<KeySignature>('C');
@@ -84,9 +85,6 @@ export default function ChallengePage() {
             const validNotes = nextNotes.filter(n => {
                 if (n.status === 'pending' && n.x < -50) {
                     // Missed!
-                    // Triggers side effect inside render is bad practice vs finding them.
-                    // But strictly here we are just computing next state.
-                    // We'll handle "Miss" logic in a separate effect or checking logic
                     return false;
                 }
                 if (n.x < -100) return false; // Garbage collect
@@ -130,11 +128,7 @@ export default function ChallengePage() {
 
         setActiveNotes(currentNotes => {
             // Find targetable notes.
-            // For mouse, we want to be linient if nothing is "perfectly" in range, maybe target the absolute closest even if far out?
-            // But requirements say "0 points if missing".
-            // So we still look for something reasonably close.
-            // Let's use a max interactive range of e.g. 150px to find a candidate to grade.
-            const MAX_INTERACTION_RANGE = 200;
+            const MAX_INTERACTION_RANGE = 300;
 
             let pendingNotes = currentNotes.filter(n =>
                 n.status === 'pending' &&
@@ -143,68 +137,63 @@ export default function ChallengePage() {
             );
 
             // Fix: For MIDI input, filter by pitch first to prevent duplicate consecutive notes
-            // from both being validated with a single note input
             if (input.type === 'midi' && pendingNotes.length > 0) {
                 const inputPitch = input.pitch! % 12;
-                // Filter to only notes with matching pitch
-                const matchingNotes = pendingNotes.filter(n => (n.note.midiNumber % 12) === inputPitch);
+                const PITCH_PRIORITY_RANGE = 60;
+
+                const matchingNotes = pendingNotes.filter(n =>
+                    (n.note.midiNumber % 12) === inputPitch &&
+                    Math.abs(n.x - HIT_X) <= PITCH_PRIORITY_RANGE
+                );
+
                 if (matchingNotes.length > 0) {
-                    // Use only matching notes - this ensures only the first matching note is validated
                     pendingNotes = matchingNotes;
-                } else {
-                    // No matching pitch found - will show wrong note feedback
                 }
             }
 
             if (pendingNotes.length === 0) return currentNotes;
 
-            // Sort by distance to HIT_X to find the most "intentional" target
-            // Typically the one closest to the line is the one being aimed at.
             pendingNotes.sort((a, b) => Math.abs(a.x - HIT_X) - Math.abs(b.x - HIT_X));
 
             const targetNote = pendingNotes[0];
 
             if (!targetNote) return currentNotes;
 
+            const STRICT_INTERACTIVE_ZONE = 60;
+            const dist = Math.abs(targetNote.x - HIT_X);
+
+            if (dist > STRICT_INTERACTIVE_ZONE) {
+                return currentNotes;
+            }
+
             // Usage validation
             if (input.type === 'midi') {
-                // Check Patch (should already match due to filtering above, but double-check for safety)
                 const isMatch = (input.pitch! % 12) === (targetNote.note.midiNumber % 12);
                 if (!isMatch) {
                     setCombo(0);
-                    setFeedback({ text: 'Wrong Note!', color: 'text-red-500' });
+                    setFeedback({ text: t('melodic.wrong_note'), color: 'text-red-500' });
                     setTimeout(() => setFeedback(null), 500);
                     return currentNotes;
                 }
             }
-            // For mouse, we assume they are trying to hit the current note regardless of pitch understanding (rhythm game style)
 
             // Grading
-            const dist = Math.abs(targetNote.x - HIT_X);
             let newStatus: GameNote['status'] = 'pending';
             let points = 0;
 
             if (dist <= HIT_WINDOW) {
-                // Green Zone (+/- 30px)
                 newStatus = 'match_perfect';
                 points = SCORE_PERFECT;
-                setFeedback({ text: 'PERFECT! +5', color: 'text-green-500' });
+                setFeedback({ text: `${t('rhythm.perfect')} +${SCORE_PERFECT}`, color: 'text-green-500' });
             } else if (dist <= HIT_WINDOW_GOOD) {
-                // Yellow Zone (+/- 35px)
                 newStatus = 'match_good';
                 points = SCORE_GOOD;
-                setFeedback({ text: 'Good +3', color: 'text-yellow-500' });
+                setFeedback({ text: `${t('rhythm.good')} +${SCORE_GOOD}`, color: 'text-yellow-500' });
             } else {
-                // Missed Zone (Red)
-                // If they clicked but were outside the valid window
                 setCombo(0);
                 points = SCORE_MISS;
-                // We intentionally DON'T mark it as 'hit' so it might still be active? 
-                // No, if they attempted and failed, it should probably count as their attempt for this note.
-                // Or does missing a click mean you can try again?
-                // Usually rhythm games: bad timing = miss = note exhausted.
                 newStatus = 'miss';
-                setFeedback({ text: 'Miss! 0', color: 'text-red-500' });
+                setFeedback({ text: `${t('challenge.mancato')} 0`, color: 'text-red-500' });
             }
 
             if (points > 0) {
@@ -218,7 +207,7 @@ export default function ChallengePage() {
                 n.id === targetNote.id ? { ...n, status: newStatus } : n
             );
         });
-    }, [isPlaying]);
+    }, [isPlaying, t]);
 
     // MIDI Listener
     const handleMidiInput = useCallback((event: MIDINoteEvent) => {
@@ -243,24 +232,31 @@ export default function ChallengePage() {
                 onClick={handleMouseClick}
             >
                 <div className="text-center mb-8">
-                    <h1 className="text-4xl font-bold text-gray-800">
-                        ⚡ Challenge Mode
-                    </h1>
-                    <p className="text-gray-600">Tempo & Precision Training</p>
+                    <h1 className="text-4xl font-bold text-amber-700">{t('challenge.title')}</h1>
+                    <p className="text-amber-600 font-medium mt-2 max-w-xl mx-auto">
+                        {t('challenge.subtitle')}
+                    </p>
+                    <div className="flex justify-center gap-4 mt-4 text-sm text-amber-800/70">
+                        <span className="flex items-center gap-1">{t('challenge.midi_info')}</span>
+                        <span className="text-amber-300">•</span>
+                        <span className="flex items-center gap-1">{t('challenge.mouse_info')}</span>
+                        <span className="text-amber-300">•</span>
+                        <span className="flex items-center gap-1">{t('challenge.touch_info')}</span>
+                    </div>
                 </div>
 
                 {/* Score Board */}
                 <div className="grid grid-cols-3 gap-4 mb-4 text-center">
                     <div className="bg-white p-4 rounded-lg shadow">
-                        <p className="text-gray-500 text-sm">SCORE</p>
+                        <p className="text-gray-500 text-sm">{t('challenge.score_label')}</p>
                         <p className="text-3xl font-bold text-blue-600">{score}</p>
                     </div>
                     <div className="bg-white p-4 rounded-lg shadow">
-                        <p className="text-gray-500 text-sm">COMBO</p>
+                        <p className="text-gray-500 text-sm">{t('challenge.combo_label')}</p>
                         <p className="text-3xl font-bold text-orange-500">{combo}x</p>
                     </div>
                     <div className="bg-white p-4 rounded-lg shadow">
-                        <p className="text-gray-500 text-sm">BPM</p>
+                        <p className="text-gray-500 text-sm">{t('common.bpm')}</p>
                         <div className="flex items-center justify-center space-x-2">
                             <button onClick={() => setBpm(b => Math.max(30, b - 5))} className="p-1 bg-gray-200 rounded hover:bg-gray-300">-</button>
                             <span className="text-2xl font-bold">{bpm}</span>
@@ -295,14 +291,14 @@ export default function ChallengePage() {
                             onClick={startGame}
                             className="bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-12 rounded-full shadow-lg transform transition hover:scale-105"
                         >
-                            START CHALLENGE
+                            {t('challenge.start_btn')}
                         </button>
                     ) : (
                         <button
                             onClick={stopGame}
                             className="bg-red-500 hover:bg-red-600 text-white font-bold py-4 px-12 rounded-full shadow-lg"
                         >
-                            STOP
+                            {t('common.stop')}
                         </button>
                     )}
                 </div>

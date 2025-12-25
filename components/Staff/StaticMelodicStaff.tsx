@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Vex } from 'vexflow';
 import { MelodicNote } from '@/lib/generator/melodic-generator';
 
@@ -22,21 +22,37 @@ export default function StaticMelodicStaff({ notes, timeSignature }: StaticMelod
     const rendererRef = useRef<any>(null);
     const contextRef = useRef<any>(null);
 
-    const STAFF_WIDTH_PER_BAR = 480;
+    const [barWidth, setBarWidth] = useState(380);
     const STAFF_HEIGHT = 220;
 
     useEffect(() => {
         if (!containerRef.current) return;
 
+        const resizeObserver = new ResizeObserver((entries) => {
+            for (let entry of entries) {
+                const totalWidth = entry.contentRect.width;
+                if (totalWidth > 0) {
+                    const calculatedBarWidth = Math.max(150, (totalWidth - 60) / 2);
+                    if (Math.abs(calculatedBarWidth - barWidth) > 5) {
+                        setBarWidth(calculatedBarWidth);
+                    }
+                }
+            }
+        });
+
+        resizeObserver.observe(containerRef.current);
+
         containerRef.current.innerHTML = '';
         const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
-        renderer.resize(STAFF_WIDTH_PER_BAR * 2 + 60, STAFF_HEIGHT);
+        renderer.resize(barWidth * 2 + 60, STAFF_HEIGHT);
         const context = renderer.getContext();
         rendererRef.current = renderer;
         contextRef.current = context;
 
         renderFrame();
-    }, [notes, timeSignature]);
+
+        return () => resizeObserver.disconnect();
+    }, [notes, timeSignature, barWidth]);
 
     const renderFrame = () => {
         if (!contextRef.current) return;
@@ -55,12 +71,12 @@ export default function StaticMelodicStaff({ notes, timeSignature }: StaticMelod
             else measure2.push(n);
         });
 
-        const stave1 = new Stave(10, 50, STAFF_WIDTH_PER_BAR);
+        const stave1 = new Stave(10, 50, barWidth);
         stave1.addClef('treble');
         stave1.addTimeSignature(timeSignature);
         stave1.setContext(context).draw();
 
-        const stave2 = new Stave(10 + STAFF_WIDTH_PER_BAR, 50, STAFF_WIDTH_PER_BAR);
+        const stave2 = new Stave(10 + barWidth, 50, barWidth);
         stave2.setContext(context).draw();
 
         const createVexNotes = (measureNotes: typeof measure1) => {
@@ -102,7 +118,7 @@ export default function StaticMelodicStaff({ notes, timeSignature }: StaticMelod
             const vfNotes1 = createVexNotes(measure1);
             const beams1 = Beam.generateBeams(vfNotes1);
             voice1.addTickables(vfNotes1);
-            new Formatter().joinVoices([voice1]).format([voice1], STAFF_WIDTH_PER_BAR - 80);
+            new Formatter().joinVoices([voice1]).format([voice1], barWidth - 80);
             voice1.draw(context, stave1);
             beams1.forEach(b => b.setContext(context).draw());
         }
@@ -113,15 +129,15 @@ export default function StaticMelodicStaff({ notes, timeSignature }: StaticMelod
             const vfNotes2 = createVexNotes(measure2);
             const beams2 = Beam.generateBeams(vfNotes2);
             voice2.addTickables(vfNotes2);
-            new Formatter().joinVoices([voice2]).format([voice2], STAFF_WIDTH_PER_BAR - 80);
+            new Formatter().joinVoices([voice2]).format([voice2], barWidth - 80);
             voice2.draw(context, stave2);
             beams2.forEach(b => b.setContext(context).draw());
         }
     };
 
     return (
-        <div className="relative flex justify-center mt-10">
-            <div ref={containerRef} className="bg-white p-4 rounded-xl shadow-lg border-2 border-gray-200" />
+        <div className="w-full max-w-full overflow-hidden flex justify-center mt-10 px-4">
+            <div ref={containerRef} className="bg-white p-4 rounded-xl shadow-lg border-2 border-gray-200 w-full" style={{ minHeight: STAFF_HEIGHT }} />
         </div>
     );
 }

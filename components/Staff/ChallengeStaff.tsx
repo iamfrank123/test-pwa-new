@@ -28,28 +28,38 @@ export default function ChallengeStaff({
     const contextRef = useRef<any>(null);
 
     // Constants for layout
-    const STAFF_WIDTH = 1000; // Fixed width for the canvas
+    const [staffWidth, setStaffWidth] = useState(1000);
     const STAFF_HEIGHT = 200;
-    const HIT_ZONE_X = 100; // The "green line" position
-    const HIT_ZONE_WIDTH = 60; // Width of the hit zone
+    const HIT_ZONE_X = 100;
+    const HIT_ZONE_WIDTH = 60;
 
-    // Initialize VexFlow Renderer
     useEffect(() => {
         if (!containerRef.current) return;
 
-        containerRef.current.innerHTML = ''; // Clear previous
+        const resizeObserver = new ResizeObserver((entries) => {
+            for (let entry of entries) {
+                const width = entry.contentRect.width;
+                if (width > 0 && Math.abs(width - staffWidth) > 10) {
+                    setStaffWidth(width);
+                }
+            }
+        });
 
+        resizeObserver.observe(containerRef.current);
+
+        if (!containerRef.current) return;
+
+        containerRef.current.innerHTML = '';
         const renderer = new Renderer(containerRef.current, Renderer.Backends.SVG);
-        renderer.resize(STAFF_WIDTH, STAFF_HEIGHT);
+        renderer.resize(staffWidth, STAFF_HEIGHT);
         const context = renderer.getContext();
-
         rendererRef.current = renderer;
         contextRef.current = context;
 
-        // Initial draw of static elements (stave, clef, key sig)
         drawStaticElements();
 
-    }, [keySignature]); // Re-init if key signature changes
+        return () => resizeObserver.disconnect();
+    }, [keySignature, staffWidth]);
 
     const drawStaticElements = () => {
         if (!contextRef.current) return;
@@ -58,7 +68,7 @@ export default function ChallengeStaff({
         context.clear(); // Clear canvas
 
         // Draw the stave
-        const stave = new Stave(0, 40, STAFF_WIDTH);
+        const stave = new Stave(0, 40, staffWidth);
         stave.addClef('treble');
         stave.addKeySignature(keySignature);
         stave.setContext(context).draw();
@@ -109,11 +119,11 @@ export default function ChallengeStaff({
             // So we manually position StaveNotes.
 
             const context = contextRef.current;
-            const stave = new Stave(0, 40, STAFF_WIDTH); // Need stave reference for y-positioning
+            const stave = new Stave(0, 40, staffWidth); // Need stave reference for y-positioning
 
             notes.forEach(noteData => {
                 // Skip if off screen
-                if (noteData.x < -50 || noteData.x > STAFF_WIDTH + 50) return;
+                if (noteData.x < -50 || noteData.x > staffWidth + 50) return;
 
                 const accidentalStr = noteData.note.accidental === '#' ? '#' : noteData.note.accidental === 'b' ? 'b' : '';
                 const noteStr = `${noteData.note.note.toLowerCase()}${accidentalStr}/${noteData.note.octave}`;
@@ -166,10 +176,11 @@ export default function ChallengeStaff({
     }, [notes, keySignature]); // Re-run when notes data changes (which happens every tick in parent)
 
     return (
-        <div className="relative">
+        <div className="w-full max-w-full overflow-hidden relative">
             <div
                 ref={containerRef}
-                className="bg-white rounded-xl shadow-lg border-2 border-gray-200 overflow-hidden"
+                className="bg-white rounded-xl shadow-lg border-2 border-gray-200 w-full"
+                style={{ minHeight: STAFF_HEIGHT }}
             />
             {/* Visual Guide for the Hit Zone - Overlay for clarity */}
             <div

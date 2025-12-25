@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { KeySignature, NoteRange } from '@/lib/generator/types';
+import { useTranslation } from '@/context/LanguageContext';
 
 interface SettingsProps {
     keySignature: KeySignature;
@@ -25,18 +26,6 @@ const NOTE_OPTIONS = [
 
 const KEY_SIGNATURES: KeySignature[] = ['C', 'G', 'D', 'A', 'E', 'F', 'Bb', 'Eb', 'Ab'];
 
-const KEY_SIGNATURE_LABELS: Record<KeySignature, string> = {
-    'C': 'C Major',
-    'G': 'G Major (1♯)',
-    'D': 'D Major (2♯)',
-    'A': 'A Major (3♯)',
-    'E': 'E Major (4♯)',
-    'F': 'F Major (1♭)',
-    'Bb': 'B♭ Major (2♭)',
-    'Eb': 'E♭ Major (3♭)',
-    'Ab': 'A♭ Major (4♭)',
-};
-
 export default function Settings({
     keySignature,
     noteRange,
@@ -46,9 +35,22 @@ export default function Settings({
     onStartExercise,
     onStopExercise,
 }: SettingsProps) {
+    const { t } = useTranslation();
     const [lowNote, setLowNote] = useState(noteRange.low);
     const [highNote, setHighNote] = useState(noteRange.high);
     const [error, setError] = useState<string | null>(null);
+
+    const KEY_SIGNATURE_LABELS: Record<KeySignature, string> = {
+        'C': `C ${t('settings.major')}`,
+        'G': `G ${t('settings.major')} (1♯)`,
+        'D': `D ${t('settings.major')} (2♯)`,
+        'A': `A ${t('settings.major')} (3♯)`,
+        'E': `E ${t('settings.major')} (4♯)`,
+        'F': `F ${t('settings.major')} (1♭)`,
+        'Bb': `B♭ ${t('settings.major')} (2♭)`,
+        'Eb': `E♭ ${t('settings.major')} (3♭)`,
+        'Ab': `A♭ ${t('settings.major')} (4♭)`,
+    };
 
     const handleLowNoteChange = (value: string) => {
         setLowNote(value);
@@ -65,7 +67,7 @@ export default function Settings({
         const highIndex = NOTE_OPTIONS.indexOf(high);
 
         if (lowIndex >= highIndex) {
-            setError('La nota alta deve essere superiore alla nota bassa');
+            setError(t('settings.error_range'));
             return;
         }
 
@@ -75,13 +77,13 @@ export default function Settings({
 
     return (
         <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6">⚙️ Impostazioni</h2>
+            <h2 className="text-2xl font-bold text-gray-800 mb-6">{t('settings.title')}</h2>
 
             <div className="grid md:grid-cols-2 gap-6">
                 {/* Key Signature Selection */}
                 <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Tonalità
+                        {t('settings.key_signature')}
                     </label>
                     <select
                         value={keySignature}
@@ -100,7 +102,7 @@ export default function Settings({
                 {/* Note Range Selection */}
                 <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Range di Note
+                        {t('settings.note_range')}
                     </label>
                     <div className="flex items-center gap-3">
                         <select
@@ -146,14 +148,14 @@ export default function Settings({
                         className="px-8 py-4 bg-green-600 hover:bg-green-700 text-white font-bold text-xl rounded-lg shadow-lg transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
                         disabled={!!error}
                     >
-                        ▶️ START Esercizio
+                        {t('settings.start_exercise')}
                     </button>
                 ) : (
                     <button
                         onClick={onStopExercise}
                         className="px-8 py-4 bg-red-600 hover:bg-red-700 text-white font-bold text-xl rounded-lg shadow-lg transition-all transform hover:scale-105"
                     >
-                        ⏹️ STOP Esercizio
+                        {t('settings.stop_exercise')}
                     </button>
                 )}
             </div>
